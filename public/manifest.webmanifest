@@ -1,0 +1,16 @@
+{
+  "name": "我们的恋爱手账",
+  "short_name": "恋爱手账",
+  "description": "两个人的小小恋爱空间：日记、照片、留言、纪念日与生理期",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#FFF6F0",
+  "theme_color": "#F6A6B4",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

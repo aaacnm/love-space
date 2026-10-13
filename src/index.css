@@ -4,6 +4,28 @@
 
 :root {
   color-scheme: light;
+  /* 主色 RGB 三元组（女生默认粉调）：blush #F6A6B4 / rosy #E97B92 */
+  --c-blush: 246 166 180;
+  --c-rosy: 233 123 146;
+}
+
+/* 男生主题：沉稳蓝调（blush #7EA8DC / rosy #4676A8）
+   由 Dashboard 按 members.gender 挂 html.theme-male，编辑资料里点选可即时预览 */
+html.theme-male {
+  --c-blush: 126 168 220;
+  --c-rosy: 70 118 168;
+}
+
+html.theme-male body {
+  background-color: #f0f4f9;
+}
+
+html.theme-male .bg-paper {
+  background-color: #f0f4f9;
+  background-image:
+    radial-gradient(circle at 15% 12%, rgba(126, 168, 220, 0.1) 0, transparent 40%),
+    radial-gradient(circle at 85% 30%, rgba(70, 118, 168, 0.08) 0, transparent 42%),
+    radial-gradient(circle at 50% 80%, rgba(191, 216, 184, 0.08) 0, transparent 45%);
 }
 
 html,
@@ -37,7 +59,15 @@ body {
   scrollbar-width: none;
 }
 
+.heart-up {
+  animation: heartUp 0.7s ease-out forwards;
+}
+
 /* 便利贴轻微摇摆动画 */
+@keyframes heartUp {
+  0% { opacity: 1; transform: translateY(0) scale(0.8); }
+  100% { opacity: 0; transform: translateY(-46px) scale(1.4); }
+}
 @keyframes noteSway {
   0%, 100% { transform: rotate(var(--tilt, 0deg)); }
   50% { transform: rotate(calc(var(--tilt, 0deg) + 1.5deg)); }

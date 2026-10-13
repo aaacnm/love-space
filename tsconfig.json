@@ -1,0 +1,23 @@
+{
+  // 这是个 JavaScript 项目：tsc 只用来做「类型感知的语法 / 模块解析」检查（npm run typecheck），
+  // 不做类型标注检查（checkJs 关掉），也不产出任何文件（noEmit）。
+  // 能抓到的问题：拼错的导入路径、语法错误、JSX 写错；不会一上来报几百条类型错误。
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "allowJs": true,
+    "checkJs": false,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "strict": false,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noResolve": false
+  },
+  "include": ["src", "tests", "scripts", "vite.config.js", "vitest.config.js", "eslint.config.js"],
+  "exclude": ["node_modules", "dist", "coverage", ".workbuddy"]
+}

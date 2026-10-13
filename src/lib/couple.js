@@ -78,11 +78,12 @@ export async function fetchMilestones(coupleId) {
 }
 
 // 更新自己的资料
-export async function updateMyProfile({ nickname, emoji, city, timezone, avatar_path }) {
+export async function updateMyProfile({ nickname, emoji, city, timezone, avatar_path, gender }) {
   const { data: user } = await supabase.auth.getUser()
   if (!user?.user) return
   const update = { nickname, emoji, city, timezone }
   if (avatar_path !== undefined) update.avatar_path = avatar_path // 允许置 null（恢复 emoji 头像）
+  if (gender !== undefined) update.gender = gender // 'male' | 'female' | null（清除）
   const { error } = await supabase
     .from('members')
     .update(update)

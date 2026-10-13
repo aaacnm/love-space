@@ -2,6 +2,8 @@ import { StoreProvider, useStore } from './lib/store.jsx'
 import { Spinner } from './components/ui.jsx'
 import Onboarding from './views/Onboarding.jsx'
 import Dashboard from './views/Dashboard.jsx'
+import ErrorBoundary from './components/ErrorBoundary.jsx'
+import { ToastProvider } from './lib/toast.jsx'
 
 function Root() {
   const { coupleId, loading } = useStore()
@@ -25,7 +27,12 @@ function Root() {
 export default function App() {
   return (
     <StoreProvider>
-      <Root />
+      {/* ToastProvider：全站统一提示的挂载点（成功/失败/警告/进行中） */}
+      <ToastProvider>
+        <ErrorBoundary>
+          <Root />
+        </ErrorBoundary>
+      </ToastProvider>
     </StoreProvider>
   )
 }

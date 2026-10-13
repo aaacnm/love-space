@@ -1,0 +1,15 @@
+-- ============================================================
+--  「和好」栏目迁移 —— 拆成两个小脚本，请按顺序分别执行
+--
+--    supabase/migration_conflicts_a.sql   四张表 + 行级安全（含复盘双盲策略）
+--    supabase/migration_conflicts_b.sql   实时同步 + replica identity
+--
+--  为什么要拆：SQL Editor 把整个脚本放进一个事务执行，一次跑多条 DDL
+--  时持锁过久，容易和并发会话互相等待触发 40P01 deadlock detected。
+--
+--  四张表：
+--    makeups          冷战/破冰事件流水（upset / peace）
+--    conflicts       矛盾事件（一次争执一条）
+--    conflict_reviews 复盘（每人一份，双方交卷后才互相可见）
+--    promises        我们的约定
+-- ============================================================

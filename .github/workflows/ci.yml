@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+# 同一个分支上重复推送时，只保留最新一次检查
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: lint / typecheck / test / db:check / build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm run test
+
+      # 迁移生成物同步性：schema.sql / check_migration_status.sql
+      # 必须与 supabase/migrations/ 完全一致（\u4fee\u5e93\u7ed3\u6784\u552f\u4e00\u4e8b\u5b9e\u6765\u6e90\uff09
+      - name: Migrations in sync
+        run: npm run db:check
+
+      # 构建不连数据库：缺少 VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY 时
+      # 前端会走占位配置并在控制台提示，构建本身不受影响
+      - name: Build
+        run: npm run build

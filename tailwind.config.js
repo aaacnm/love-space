@@ -5,11 +5,18 @@ export default {
     extend: {
       colors: {
         cream: '#FFF6F0',
-        blush: '#F6A6B4',
-        rosy: '#E97B92',
+        // 主色用 CSS 变量承载：男生账号（html.theme-male）整体换蓝调，见 index.css。
+        // <alpha-value> 让 bg-blush/10 这类透明度变体继续可用
+        blush: 'rgb(var(--c-blush) / <alpha-value>)',
+        rosy: 'rgb(var(--c-rosy) / <alpha-value>)',
         peach: '#FBD3C4',
         matcha: '#BFD8B8',
         butter: '#FBE9C8',
+        // 深一档的变体：生理期日历格子专用（浅色版在浅纸底上叠透明度后看不清）
+        peachDeep: '#F2A87F',
+        matchaDeep: '#9CC493',
+        butterDeep: '#F3CE7B',
+        lilac: '#A88BDC',
         cocoa: '#5C4A45',
         cocoaSoft: '#8A726C',
       },

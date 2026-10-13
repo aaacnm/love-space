@@ -5,6 +5,9 @@ import { Card, Button, Modal, Field, TextInput } from '../components/ui.jsx'
 import { Avatar } from '../components/Avatar.jsx'
 import EditProfileModal from '../components/EditProfileModal.jsx'
 import ManageMembersModal from '../components/ManageMembersModal.jsx'
+import { PokeSection } from '../components/Poke.jsx'
+import InteractiveGrid from '../components/InteractiveGrid.jsx'
+import PartnerNews from '../components/PartnerNews.jsx'
 import { timeInZone } from '../lib/hooks.js'
 
 function useNow(interval = 1000) {
@@ -30,29 +33,87 @@ function diffParts(from, to) {
 
 const pad = (n) => String(n).padStart(2, '0')
 
+// 'YYYY-MM-DD' 是纯日期，直接 new Date() 会按 UTC 零点解析（东八区等于早上 8 点），
+// 算出来的天数会少 8 小时。这里统一按本地零点解析。
+function parseDay(s) {
+  const [y, m, d] = String(s).slice(0, 10).split('-').map(Number)
+  return new Date(y, m - 1, d)
+}
+
+const startOfToday = () => {
+  const d = new Date()
+  d.setHours(0, 0, 0, 0)
+  return d
+}
+
+// 日历天差：今天 = 0，明天 = 1（不受时区/时分秒影响）
+const daysFromToday = (s) => Math.round((parseDay(s) - startOfToday()) / 86400000)
+
+const cnDate = (s) => {
+  const [y, m, d] = String(s).slice(0, 10).split('-').map(Number)
+  return `${y}年${m}月${d}日`
+}
+
 export default function Home() {
   const { couple, members, milestones, myMember, partner, refresh } = useStore()
   const now = useNow()
   const [showMeetup, setShowMeetup] = useState(false)
   const [showProfile, setShowProfile] = useState(false)
   const [showMembers, setShowMembers] = useState(false)
+  const [showAnniv, setShowAnniv] = useState(false)
+  const [annivDate, setAnnivDate] = useState('')
   const [meetupTitle, setMeetupTitle] = useState('见面')
   const [meetupDate, setMeetupDate] = useState('')
   const [saving, setSaving] = useState(false)
 
+  // 邀请文案按自己的性别角色化：男生邀请「她」，女生邀请「他」
+  const inviteHint =
+    myMember?.gender === 'male'
+      ? '点一下复制，发给女朋友，邀请她加入这个空间'
+      : myMember?.gender === 'female'
+        ? '点一下复制，发给男朋友，邀请他加入这个空间'
+        : '点一下复制，发给 TA 加入这个空间'
+
   const anniversary = milestones.find((m) => m.type === 'anniversary')
   const futureMeetups = milestones
-    .filter((m) => m.type === 'meetup' && new Date(m.date) >= new Date(now.getFullYear(), now.getMonth(), now.getDate()))
-    .sort((a, b) => new Date(a.date) - new Date(b.date))
+    .filter((m) => m.type === 'meetup' && parseDay(m.date) >= startOfToday())
+    .sort((a, b) => parseDay(a.date) - parseDay(b.date))
   const nextMeetup = futureMeetups[0]
 
-  const together = anniversary ? diffParts(new Date(anniversary.date), now) : null
+  const together = anniversary ? diffParts(parseDay(anniversary.date), now) : null
 
   let progress = 0
   if (anniversary && nextMeetup) {
-    const start = new Date(anniversary.date).getTime()
-    const end = new Date(nextMeetup.date).getTime()
+    const start = parseDay(anniversary.date).getTime()
+    const end = parseDay(nextMeetup.date).getTime()
     progress = Math.min(1, Math.max(0, (now - start) / (end - start)))
+  }
+
+  // 打开纪念日弹窗时带上当前值；没设置过就留空让用户填
+  const openAnniv = () => {
+    setAnnivDate(anniversary?.date ? String(anniversary.date).slice(0, 10) : '')
+    setShowAnniv(true)
+  }
+
+  const saveAnniv = async () => {
+    if (!annivDate) return
+    setSaving(true)
+    // 已有就改日期，没有就新建一条 anniversary 里程碑（双方都能改，改完实时同步）
+    const { error } = await supabase.from('milestones').upsert(
+      {
+        id: anniversary?.id,
+        couple_id: couple.id,
+        type: 'anniversary',
+        title: '在一起',
+        date: annivDate,
+      },
+      { onConflict: 'id' },
+    )
+    setSaving(false)
+    if (!error) {
+      setShowAnniv(false)
+      await refresh()
+    }
   }
 
   const copyCode = async () => {
@@ -86,6 +147,9 @@ export default function Home() {
 
   return (
     <div className="space-y-4">
+      {/* TA 的新动态：未读聚合（想聊聊/新留言/日记评论/戳一戳/心情），没有新动态时不渲染 */}
+      <PartnerNews />
+
       {/* 顶部：两人 + 情侣码 */}
       <Card className="text-center">
         <div className="flex items-center justify-center gap-3">
@@ -101,7 +165,7 @@ export default function Home() {
         >
           情侣码 <span className="font-display tracking-[0.2em]">{couple?.code}</span> 📋
         </button>
-        <p className="mt-1 text-xs text-cocoaSoft/70">点一下复制，发给 TA 加入这个空间</p>
+        <p className="mt-1 text-xs text-cocoaSoft/70">{inviteHint}</p>
         <button
           onClick={() => setShowProfile(true)}
           className="mt-2 inline-flex items-center gap-1 rounded-full bg-cream px-4 py-1.5 text-sm font-bold text-cocoaSoft"
@@ -122,10 +186,14 @@ export default function Home() {
             <div className="font-display text-xl text-cocoaSoft">
               {pad(together.hours)} 时 {pad(together.mins)} 分 {pad(together.secs)} 秒
             </div>
+            <p className="mt-1 text-xs text-cocoaSoft/70">自 {cnDate(anniversary.date)} 起</p>
           </>
         ) : (
-          <p className="py-6 text-sm text-cocoaSoft">在首页设置纪念日后，这里会每天为你倒数 ❤</p>
+          <p className="py-6 text-sm text-cocoaSoft">还没设置在一起的日子，点下面定一个吧 ❤</p>
         )}
+        <Button variant="ghost" className="mt-3 w-full" onClick={openAnniv}>
+          {anniversary ? '💞 修改纪念日' : '💞 设置纪念日'}
+        </Button>
       </Card>
 
       {/* 下次见面倒计时 */}
@@ -135,7 +203,7 @@ export default function Home() {
           <>
             <div className="my-2 flex items-end justify-center gap-1">
               <span className="font-display text-6xl leading-none text-blush">
-                {Math.max(0, Math.floor((new Date(nextMeetup.date) - now) / 86400000))}
+                {Math.max(0, daysFromToday(nextMeetup.date))}
               </span>
               <span className="mb-1 text-xl font-bold text-cocoa">天</span>
             </div>
@@ -157,6 +225,12 @@ export default function Home() {
           {nextMeetup ? '📅 修改下次见面' : '📅 设置下次见面'}
         </Button>
       </Card>
+
+      {/* 戳一戳（压缩为一行） */}
+      <PokeSection compact />
+
+      {/* 互动磁贴：心情 / 一问 / 转盘 / 距离，点开弹大窗 */}
+      <InteractiveGrid />
 
       {/* 两人时区 */}
       <Card>
@@ -187,6 +261,21 @@ export default function Home() {
           )}
         </div>
       </Card>
+
+      {/* 设置 / 修改纪念日弹窗 */}
+      <Modal open={showAnniv} onClose={() => setShowAnniv(false)} title="在一起的纪念日">
+        <div className="space-y-4">
+          <Field label="我们在一起的那天">
+            <TextInput type="date" value={annivDate} onChange={(e) => setAnnivDate(e.target.value)} />
+          </Field>
+          <p className="text-xs text-cocoaSoft/70">
+            改完首页的天数会立刻重新算，TA 那边也会同步（这个是你们共用的，谁改都一样）。
+          </p>
+          <Button className="w-full" onClick={saveAnniv} disabled={saving || !annivDate}>
+            {saving ? '保存中…' : '保存'}
+          </Button>
+        </div>
+      </Modal>
 
       {/* 设置见面弹窗 */}
       <Modal open={showMeetup} onClose={() => setShowMeetup(false)} title="设置下次见面">

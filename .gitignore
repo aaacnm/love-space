@@ -1,6 +1,27 @@
 node_modules
 dist
+coverage
 .env
 .env.local
 .DS_Store
 *.log
+
+# 本地构建 / 调试残留
+.tmp/
+supabase/.temp/
+
+# 发布产物（部署时自动生成，不要入库）
+.wbapp_*.genie
+
+# AI 生成的图片素材（一次性产物）
+generated-images/
+
+# WorkBuddy 工作区：临时图片、探测脚本、agent 记忆等默认全部忽略
+.workbuddy/**
+# 但历史 jsdom 用例（npm run test:legacy）是真实测试资产，保留源码与入口
+!.workbuddy/test/
+!.workbuddy/test/*.mjs
+!.workbuddy/test/*.jsx
+# 用例运行时由 esbuild 重新生成的打包产物，不入库
+.workbuddy/test/*.bundle.cjs
+.workbuddy/test/*bundle.mjs

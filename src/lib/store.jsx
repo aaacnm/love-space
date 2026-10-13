@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState, useCallback } from 'react'
+import { toast } from './toast.jsx'
 import {
   ensureAnonymousUser,
   fetchMyMember,
@@ -43,6 +44,8 @@ export function StoreProvider({ children }) {
         if (member) await loadSpace(member.couple_id)
       } catch (e) {
         console.error('初始化失败', e)
+        // 这里失败 = 页面拿不到空间数据，用户必须知道（否则只会一直转圈）
+        toast.error('加载失败：' + (e?.message || '未知错误') + '\n请刷新页面重试')
       } finally {
         if (!cancelled) setLoading(false)
       }

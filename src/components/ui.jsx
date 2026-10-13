@@ -1,8 +1,11 @@
 import { useEffect } from 'react'
 
-export function Card({ children, className = '' }) {
+// 注意：必须把 rest 透传，否则 onClick 之类会被静默丢弃（卡片点击失效的元凶）
+export function Card({ children, className = '', ...rest }) {
   return (
-    <div className={`rounded-card bg-white shadow-card p-5 ${className}`}>{children}</div>
+    <div className={`rounded-card bg-white shadow-card p-5 ${className}`} {...rest}>
+      {children}
+    </div>
   )
 }
 
@@ -30,20 +33,20 @@ export function Field({ label, children }) {
   )
 }
 
-export function TextInput(props) {
+export function TextInput({ className = '', ...props }) {
   return (
     <input
       {...props}
-      className="w-full rounded-xl border-2 border-peach/60 bg-white px-4 py-2.5 text-cocoa outline-none placeholder:text-cocoaSoft/40 focus:border-blush"
+      className={`w-full rounded-xl border-2 border-peach/60 bg-white px-4 py-2.5 text-cocoa outline-none placeholder:text-cocoaSoft/40 focus:border-blush ${className}`}
     />
   )
 }
 
-export function TextArea(props) {
+export function TextArea({ className = '', ...props }) {
   return (
     <textarea
       {...props}
-      className="w-full resize-none rounded-xl border-2 border-peach/60 bg-white px-4 py-2.5 text-cocoa outline-none placeholder:text-cocoaSoft/40 focus:border-blush"
+      className={`w-full resize-none rounded-xl border-2 border-peach/60 bg-white px-4 py-2.5 text-cocoa outline-none placeholder:text-cocoaSoft/40 focus:border-blush ${className}`}
     />
   )
 }

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useStore } from '../lib/store.jsx'
 import { supabase } from '../lib/supabase.js'
+import { toast } from '../lib/toast.jsx'
 import { leaveCouple } from '../lib/couple.js'
 import { Modal, Button } from './ui.jsx'
 import { Avatar } from './Avatar.jsx'
@@ -36,7 +37,7 @@ export default function ManageMembersModal({ open, onClose }) {
       leaveSpace()
       onClose()
     } catch (e) {
-      console.error('退出空间失败：', e.message)
+      toast.error('退出空间失败：' + (e?.message || '请稍后重试'))
     } finally {
       setBusy(false)
       setConfirmLeave(false)
