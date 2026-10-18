@@ -2,7 +2,7 @@
 // 取数据、把状态分给子组件、把动作接回 hook。
 import { useState } from 'react'
 import { useStore } from '../lib/store.jsx'
-import { useSignedMap, useSignedSrc } from '../lib/storage.js'
+
 import { useCollection, usePagedCollection } from '../lib/hooks.js'
 import { Button, Modal, TextInput, TextArea, SectionTitle, ConfirmModal } from '../components/ui.jsx'
 import { fmtSize, saveImage } from '../lib/image.js'
@@ -15,7 +15,10 @@ import AlbumHeader from './photos/AlbumHeader.jsx'
 import PhotoGrid from './photos/PhotoGrid.jsx'
 import PhotoViewer from './photos/PhotoViewer.jsx'
 import PhotoTrash from './photos/PhotoTrash.jsx'
-import { thumbPathOf, PREVIEW_TF, fmtFullDate, relTime } from './photos/constants.js'
+import { fmtFullDate, relTime } from './photos/constants.js'
+import { useViewerSrcs, viewerSrcSet, VIEWER_SIZES } from '../lib/mediaUrls.js'
+import { useThumbSrcs } from './photos/useThumbSrcs.js'
+import { useThumbBackfill } from './photos/useThumbBackfill.js'
 import { rollbackUploads } from './photos/upload.js'
 
 // rollbackUploads 已迁到 photos/upload.js：这里是转出，既有测试通过 bundle 具名导入它
@@ -24,7 +27,8 @@ export { rollbackUploads }
 
 export default function Photos() {
   const { coupleId, user, members } = useStore()
-  // 照片墙分页：首屏最近 30 条，滚动到底加载更早的。
+  // 照片墙分页：首屏最近 PAGE_SIZE 条（默认 18），滚动到底加载更早的。
+  // 字段也只取渲染要用的那些（清单见 lib/tableColumns.js），不再 select('*')。
   // 回收站（deleted_at 非空）仍从同一 rows 推导（30 天过期清理），不过滤软删行；
   // 图集导出等「需要全量」的重操作在触发时单独按需拉取（见 exportAlbum）。
   const { rows, loading, loadingMore, hasMore, loadMore, reload } = usePagedCollection('photos', coupleId, {
@@ -151,7 +155,7 @@ export default function Photos() {
     setBrowseMode,
     memory,
     setMemory,
-    memorySrc,
+    memoryViewer,
     exporting,
     togglePin,
     rollMemory,
@@ -203,12 +207,15 @@ export default function Photos() {
 
 
   // ---------- 私有桶签名 URL ----------
-  // 全量 rows（含回收站里的）一次批量签：网格/胶囊/信息卡/确认弹窗/回收站预览共用一个 map
-  const thumbSrcs = useSignedMap('photos', rows.map(thumbPathOf))
-  const thumbSrcOf = (p) => (p ? thumbSrcs[thumbPathOf(p)] || '' : '')
-  // 大图按需单签（contain 变换）：查看弹窗 / 随机回忆
+  // 网格/胶囊/信息卡/确认弹窗/回收站预览共用一个取图入口，且**只加载缩略图**：
+  // 有 thumb_path 走批量签名；旧照片没有 thumb_path 就走服务端 480 变换，绝不下原图。
+  const thumbSrcOf = useThumbSrcs(rows)
+  // 旧照片后台补一份真实缩略图写回 thumb_path：补完它们就转成上面的批量签名通道，
+  // 列表里不再出现「缺缩略图」的记录。每次进页面最多补一轮，失败静默（不影响浏览）。
+  useThumbBackfill({ rows, coupleId, onDone: reload })
+  // 查看弹窗的大图：1280 预览 + 未变换两档，交给 srcset 按屏幕挑
   // （iOS 批量保存那张跟着 batch 状态走，在 usePhotoUpload 里签）
-  const previewSrc = useSignedSrc('photos', view?.storage_path || null, PREVIEW_TF)
+  const viewer = useViewerSrcs('photos', view?.storage_path || null)
 
 
   const toggleSelect = (id) => {
@@ -573,7 +580,7 @@ export default function Photos() {
       <PhotoViewer
         view={view}
         onClose={() => setView(null)}
-        previewSrc={previewSrc}
+        viewer={viewer}
         memberMap={memberMap}
         savingOne={savingOne}
         onSave={() => saveCurrent(view)}
@@ -629,12 +636,20 @@ export default function Photos() {
       <Modal open={!!memory} onClose={() => setMemory(null)} title="🎲 随机回忆">
         {memory && (
           <div className="space-y-3">
-            <img
-              src={memorySrc}
-              alt={memory.caption || '回忆'}
-              decoding="async"
-              className="max-h-80 w-full rounded-2xl bg-cream/60 object-contain"
-            />
+            {/* 固定高度 + contain：下面是日期卡片，「再来一张」按钮位置不随图片跳动 */}
+            <div className="flex h-80 w-full items-center justify-center rounded-2xl bg-cream/60">
+              <SmartImg
+                eager
+                priority
+                skeleton
+                src={memoryViewer.preview || memoryViewer.full}
+                srcSet={viewerSrcSet(memoryViewer)}
+                sizes={VIEWER_SIZES}
+                alt={memory.caption || '回忆'}
+                skeletonClass="h-full w-full rounded-2xl"
+                className="max-h-full w-full rounded-2xl object-contain"
+              />
+            </div>
             <div className="rounded-2xl bg-cream/70 px-4 py-3 text-center">
               <p className="text-sm font-bold text-cocoa">
                 {fmtFullDate(memory.created_at)} · {relTime(memory.created_at)}

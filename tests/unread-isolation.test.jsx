@@ -132,8 +132,10 @@ describe('不同用户互不串扰', () => {
     first.unmount() // 同一用例里只保留一棵树，避免两个探针混淆
     setStore('u2', 'c1')
     mount()
-    await waitFor(() => expect(counts().messages).toBe(0))
-    expect(baselineOf('u2')).toBeTruthy()
+    // 首次统计是「首屏画完之后」才发的（见 lib/idle.js），所以基线也要等它落地。
+    // 等 counts 没意义——u2 本来就该是 0，这里等的正是基线被写进去这件事。
+    await waitFor(() => expect(baselineOf('u2')).toBeTruthy())
+    expect(counts().messages).toBe(0)
     expect(baselineOf('u1').couples.c1.messages).toBe(OLD)
   })
 })

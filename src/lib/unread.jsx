@@ -1,6 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { supabase } from './supabase.js'
 import { useStore } from './store.jsx'
+import { subscribeTable } from './realtimeBus.js'
+import { whenIdle } from './idle.js'
 
 // ============================================================
 // 统一「未读和提醒」机制
@@ -14,6 +16,11 @@ import { useStore } from './store.jsx'
 // 重开 App 也能补出未读；退出空间再加入新空间时基线互不串扰，旧版扁平
 // 结构自动迁移）。计数 = 轻量 count 查询（created_at > 基线 且作者 = 对方），
 // 实时事件防抖重查 + 回前台/联网/每分钟兜底重查。不新增数据库表、零迁移。
+//
+// 首屏纪律：这一组统计（5 条查询）只是给红点和首页卡片用的，晚几百毫秒补上
+// 用户无感，所以第一次刷新推迟到首屏画完之后（whenIdle），不和首页真正要
+// 显示的内容（今天的心情 / 最近一条戳）抢带宽。订阅挂在 space-<coupleId>
+// 共享频道上，不再单独建频道。
 // ============================================================
 
 const KEY_PREFIX = 'love_unread_v1_'
@@ -170,9 +177,10 @@ export function UnreadProvider({ activeTab, children }) {
   refreshRef.current = refresh
 
   // ---- 常驻兜底：回前台 / 联网恢复 / 每分钟重查，杜绝计数漂移 ----
+  // 首次刷新推迟到首屏画完（见文件头注释）：未读不是首屏要显示的内容
   useEffect(() => {
     if (!coupleId || !user) return
-    refresh()
+    const cancelIdle = whenIdle(() => refresh(), { timeout: 2000, fallback: 400 })
     const onVisible = () => {
       if (document.visibilityState === 'visible') refresh()
     }
@@ -182,6 +190,7 @@ export function UnreadProvider({ activeTab, children }) {
       if (document.visibilityState === 'visible') refresh()
     }, 60000)
     return () => {
+      cancelIdle()
       document.removeEventListener('visibilitychange', onVisible)
       window.removeEventListener('online', refresh)
       clearInterval(t)
@@ -195,24 +204,15 @@ export function UnreadProvider({ activeTab, children }) {
       clearTimeout(debounceRef.current)
       debounceRef.current = setTimeout(() => refreshRef.current && refreshRef.current(), 600)
     }
-    const channel = supabase.channel(`unread-${coupleId}`)
-    for (const table of ['messages', 'message_comments', 'diary_comments', 'pokes']) {
-      channel.on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table, filter: `couple_id=eq.${coupleId}` },
-        schedule,
-      )
-    }
-    // 心情同一天改值不会产生新行（unique 约束 upsert），要监听 UPDATE
-    channel.on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: 'moods', filter: `couple_id=eq.${coupleId}` },
-      schedule,
+    // 共享频道上登记这 5 张表：任意一张有变化 → 防抖重查一次。
+    // 心情同一天改值不会产生新行（unique 约束 upsert），所以监听的是「任意事件」，
+    // 总线里 moods 也是按 '*' 登记的，改值同样能触发。
+    const offs = ['messages', 'message_comments', 'diary_comments', 'pokes', 'moods'].map((table) =>
+      subscribeTable(coupleId, table, schedule),
     )
-    channel.subscribe()
     return () => {
       clearTimeout(debounceRef.current)
-      supabase.removeChannel(channel)
+      offs.forEach((off) => off())
     }
   }, [coupleId, user])
 

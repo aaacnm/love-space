@@ -1,22 +1,23 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../lib/store.jsx'
 import { supabase } from '../lib/supabase.js'
 import { useCollection, usePagedCollection, MOODS, formatDateTime, todayStr } from '../lib/hooks.js'
-import { Card, Button, Modal, TextArea, EmptyState, Spinner, SectionTitle, ConfirmModal } from '../components/ui.jsx'
+import { SCOPE_FALLBACK_LIMIT, scopeFilter } from '../lib/tableColumns.js'
+import { Card, Button, Modal, TextArea, EmptyState, SectionTitle, ConfirmModal } from '../components/ui.jsx'
+import { DiaryListSkeleton, FilterBarSkeleton } from '../components/Skeleton.jsx'
 import { Avatar } from '../components/Avatar.jsx'
 import TrashModal from '../components/TrashModal.jsx'
 import { compressImage, mapLimit } from '../lib/image.js'
 import SmartImg from '../components/SmartImg.jsx'
-import { useSignedMap, useSignedSrc, removeUploads } from '../lib/storage.js'
+import { removeUploads } from '../lib/storage.js'
+import { useThumbUrls, useViewerSrcs, viewerSrcSet, VIEWER_SIZES } from '../lib/mediaUrls.js'
 import { isExpiredAt } from '../lib/trash.js'
 import { useToast } from '../lib/toast.jsx'
 import LoadMore from '../components/LoadMore.jsx'
 
 const moodEmoji = (v) => MOODS.find((m) => m.value === v)?.emoji || '😊'
 // photos 桶已转私有：日记配图走签名 URL（lib/storage.js）。
-// 缩略网格直接签真实文件 + CSS object-cover 裁切（等比裁剪不变形）；
-// 灯箱大图按需单签 + contain 变换（等比适配、不放大、不把原图怼进手机流量）
-const PREVIEW_TF = { height: 1280, resize: 'contain' }
+// 卡片上的配图走 480 缩略图变换、灯箱走 1280（都在 lib/mediaUrls.js 里定义）
 const MAX_IMAGES = 3
 const imgsOf = (d) => (Array.isArray(d.images) ? d.images : [])
 
@@ -39,13 +40,30 @@ const monthLabel = (key) => {
 export default function Diary() {
   const { coupleId, user, members } = useStore()
   const toast = useToast() // 统一提示：所有 Supabase 操作的成功/失败都经过它
-  // 主日记流分页：首屏最近 30 条，滚动到底加载更早的
+  // 主日记流分页：首屏最近 PAGE_SIZE 条（默认 18），滚动到底加载更早的
   const { rows, loading, loadingMore, hasMore, loadMore, reload } = usePagedCollection('diary_entries', coupleId, {
     orderBy: 'created_at',
     ascending: false,
   })
-  const { rows: comments } = useCollection('diary_comments', coupleId, { orderBy: 'created_at', ascending: true })
-  const { rows: hiddenRows, reload: reloadHidden } = useCollection('diary_hidden', coupleId)
+  // 评论 / 隐藏记录只跟**当前已加载的日记**有关：按这批 id 过滤，
+  // 而不是每次都把整个空间的评论历史全拉回来（id 过多时退化成 limit 兜底）
+  const diaryIds = useMemo(() => rows.map((d) => d.id), [rows])
+  const diaryScope = useMemo(() => scopeFilter('diary_id', diaryIds), [diaryIds])
+  // 评论只在「日记全文」弹窗里显示 → 第一次点开详情才拉，进页面时不为它发请求
+  //（卡片上的「💬 N 条评论」角标也跟着晚一步出现，没有数据时干脆不显示，不会误导）
+  const [commentsReady, setCommentsReady] = useState(false)
+  const { rows: comments } = useCollection('diary_comments', coupleId, {
+    orderBy: 'created_at',
+    ascending: true,
+    enabled: commentsReady && diaryIds.length > 0,
+    filters: diaryScope,
+    limit: diaryScope ? null : SCOPE_FALLBACK_LIMIT,
+  })
+  const { rows: hiddenRows, reload: reloadHidden } = useCollection('diary_hidden', coupleId, {
+    enabled: diaryIds.length > 0,
+    filters: diaryScope,
+    limit: diaryScope ? null : SCOPE_FALLBACK_LIMIT,
+  })
 
   const fileRef = useRef(null)
   const [open, setOpen] = useState(false)
@@ -54,6 +72,10 @@ export default function Diary() {
   const [trashOpen, setTrashOpen] = useState(false)
   const [viewing, setViewing] = useState(null)
   const [lightbox, setLightbox] = useState(null)
+  // 打开过一次详情就把评论订阅挂上（之后保持常驻，切走再回来不用重新等）
+  useEffect(() => {
+    if (viewing) setCommentsReady(true)
+  }, [viewing])
   const [content, setContent] = useState('')
   const [mood, setMood] = useState('开心')
   const [files, setFiles] = useState([]) // [{ file, url }]
@@ -64,10 +86,11 @@ export default function Diary() {
   const [month, setMonth] = useState('all') // 'all' 或 'YYYY-MM'
   const [day, setDay] = useState(todayStr()) // 'YYYY-MM-DD'，优先于月份；默认今天（iOS 空值会显示白块）
 
-  // ---------- 私有桶签名 URL（photos 桶，日记配图一次批量签，内存缓存） ----------
-  const imgSrcs = useSignedMap('photos', rows.flatMap((d) => imgsOf(d)))
-  // 灯箱大图按需单签 + contain 变换
-  const lightboxSrc = useSignedSrc('photos', lightbox, PREVIEW_TF)
+  // ---------- 私有桶签名 URL ----------
+  // 配图走 480 缩略图：卡片上只有几厘米宽，直接签 1280 的图是纯浪费流量
+  const imgSrcs = useThumbUrls('photos', rows.flatMap((d) => imgsOf(d)))
+  // 灯箱大图：1280 预览 + 未变换两档，交给 srcset 按屏幕挑
+  const viewer = useViewerSrcs('photos', lightbox)
 
   const memberMap = Object.fromEntries(members.map((m) => [m.user_id, m]))
   // 软删除（deleted_at 非空）的不算在正文列表里，它们归「最近删除」管
@@ -283,7 +306,7 @@ export default function Diary() {
 
   // ---- 卡片渲染 ----
 
-  const renderCard = (d, { hidden = false } = {}) => {
+  const renderCard = (d, { hidden = false, primary = false } = {}) => {
     const author = memberMap[d.author_user_id]
     const long = d.content.length > 15
     const imgs = imgsOf(d)
@@ -318,6 +341,9 @@ export default function Diary() {
             {imgs.map((p, i) => (
               <SmartImg
                 key={p + i}
+                skeleton
+                // 首屏第一张卡片的第一张配图才标 high，其余保持 lazy
+                priority={primary && i === 0}
                 src={imgSrcs[p] || ''}
                 alt={`配图 ${i + 1}`}
                 className="h-16 w-16 rounded-xl object-cover shadow-soft"
@@ -365,8 +391,9 @@ export default function Diary() {
     <div>
       <SectionTitle right={<Button onClick={() => setOpen(true)}>✏️ 写日记</Button>}>📔 我们的日记</SectionTitle>
 
-      {/* 日期筛选：先选月份，也可精确到某一天 */}
-      {!loading && months.length > 0 && (
+      {/* 日期筛选：先选月份，也可精确到某一天。
+          有数据就立刻画真筛选条（含缓存数据），完全没有才出同高度的骨架 */}
+      {months.length > 0 ? (
         <div className="mb-3 space-y-2">
           <div className="flex gap-2 overflow-x-auto pb-1">
             <button
@@ -427,17 +454,21 @@ export default function Diary() {
             </span>
           </div>
         </div>
-      )}
+      ) : loading ? (
+        <FilterBarSkeleton />
+      ) : null}
 
-      {loading ? (
-        <Spinner />
+      {loading && visible.length === 0 ? (
+        <DiaryListSkeleton />
       ) : filtered.length === 0 ? (
         <EmptyState
           emoji={visible.length === 0 ? '📔' : '🔍'}
           text={visible.length === 0 ? '还没有日记，写下今天想对 TA 说的话吧' : '这段时间没有日记，换个日期看看'}
         />
       ) : (
-        <div className="space-y-3">{filtered.map((d) => renderCard(d))}</div>
+        <div className="space-y-3">
+          {filtered.map((d, i) => renderCard(d, { primary: i === 0 }))}
+        </div>
       )}
 
       {/* 加载更多 */}
@@ -493,7 +524,7 @@ export default function Diary() {
             {imgsOf(d).length > 0 && (
               <div className="mt-2 flex gap-2">
                 {imgsOf(d).map((p, i) => (
-                  <SmartImg key={p + i} src={imgSrcs[p] || ''} alt={`配图 ${i + 1}`} className="h-12 w-12 rounded-lg object-cover" />
+                  <SmartImg key={p + i} skeleton src={imgSrcs[p] || ''} alt={`配图 ${i + 1}`} className="h-12 w-12 rounded-lg object-cover" />
                 ))}
               </div>
             )}
@@ -588,7 +619,7 @@ export default function Diary() {
               <div className="grid grid-cols-3 gap-2">
                 {imgsOf(viewing).map((p, i) => (
                   <button key={p + i} onClick={() => setLightbox(p)} className="block">
-                    <SmartImg src={imgSrcs[p] || ''} alt={`配图 ${i + 1}`} className="aspect-square w-full rounded-xl object-cover shadow-soft" />
+                    <SmartImg skeleton src={imgSrcs[p] || ''} alt={`配图 ${i + 1}`} className="aspect-square w-full rounded-xl object-cover shadow-soft" />
                   </button>
                 ))}
               </div>
@@ -660,7 +691,17 @@ export default function Diary() {
 
       {/* 大图查看 */}
       <Modal open={!!lightbox} onClose={() => setLightbox(null)} title="配图">
-        {lightbox && <SmartImg eager src={lightboxSrc} alt="配图大图" className="w-full rounded-2xl bg-cream/60" />}
+        {lightbox && (
+          <SmartImg
+            eager
+            priority
+            src={viewer.preview || viewer.full}
+            srcSet={viewerSrcSet(viewer)}
+            sizes={VIEWER_SIZES}
+            alt="配图大图"
+            className="w-full rounded-2xl bg-cream/60"
+          />
+        )}
       </Modal>
 
       <ConfirmModal

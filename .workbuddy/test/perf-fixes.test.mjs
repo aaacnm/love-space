@@ -212,12 +212,22 @@ console.log('\n场景 C：Dashboard tab 保活（切走不卸载，切回不重�
 document.body.innerHTML = '<div id="root"></div>'
 channelCount = 0
 removedCount = 0
-const Dashboard = (await bundle('D:/love/src/views/Dashboard.jsx', 'perf-dashboard.bundle.cjs')).default
+// bus-probe.js 同时导出 Dashboard 与总线的观测函数（同一个 bundle = 同一份模块实例）
+const { Dashboard, activeBuses } = await bundle(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), 'bus-probe.js'),
+  'perf-dashboard.bundle.cjs',
+)
 root = ReactDOM.createRoot(document.getElementById('root'))
 root.render(React.createElement(Dashboard))
 await tick(120)
 const channelsAfterHome = channelCount
-ok(channelsAfterHome > 0, `首页挂载（${channelsAfterHome} 个 realtime 频道）`)
+// 新架构：全 App 对一个空间只订阅一个共享频道（见 lib/realtimeBus.js）
+ok(channelsAfterHome === 1, `首页挂载：只有一个共享 realtime 频道（实际 ${channelsAfterHome}）`)
+const busAfterHome = activeBuses()[0]
+ok(
+  busAfterHome?.tables.includes('moods') && busAfterHome?.tables.includes('pokes'),
+  `首页订阅了心情与戳一戳（${(busAfterHome?.tables || []).join(',')}）`,
+)
 
 const tabBtn = (label) => {
   // TabBar 是 fixed/sticky 底栏，先定位它再找按钮，避免撞上页面里的同名文本
@@ -244,11 +254,19 @@ const findDiaryHeading = () => {
   return els[0]
 }
 
-// 新语义（TabActiveContext）：隐藏 tab 的 Realtime 频道被移除、切回时自动重建，
-// 频道创建数不再恒定；「不重新挂载」改用 DOM 节点身份直接验证
+// 新语义（共享频道 + TabActiveContext）：隐藏 tab 不再拆频道，只是把「它订阅的那几张表」
+// 从总线上摘掉；频道由总线在所有订阅者都离开时才撤。「不重新挂载」仍用 DOM 节点身份验证。
 const diaryHeading = findDiaryHeading()
-const removedAfterFirstDiary = removedCount
-ok(removedAfterFirstDiary > 0, `隐藏首页后其 Realtime 频道已移除（隐藏即暂停订阅，removed=${removedAfterFirstDiary}）`)
+const busAfterSwitch = activeBuses()[0]
+// 心情/戳一戳同时被「未读中心」订阅着（它是全局组件，不受 tab 可见性影响），
+// 所以看的是「订阅者个数掉了几个」，而不是这张表还挂不挂在总线上
+ok(
+  busAfterSwitch.listeners.moods < busAfterHome.listeners.moods &&
+    busAfterSwitch.listeners.pokes < busAfterHome.listeners.pokes,
+  `首页隐藏 → 心情与戳一戳各摘掉一个订阅者（moods ${busAfterHome.listeners.moods}→${busAfterSwitch.listeners.moods}，pokes ${busAfterHome.listeners.pokes}→${busAfterSwitch.listeners.pokes}）`,
+)
+ok(busAfterSwitch.tables.includes('diary_entries'), '日记页挂上了自己的订阅')
+ok(removedCount === 0, `切 tab 不再反复拆建频道（removed=${removedCount}）`)
 
 const channelsAfterDiary = channelCount
 tabBtn('首页').click()
@@ -257,8 +275,12 @@ tabBtn('日记').click()
 await tick(120)
 const diaryHeading2 = findDiaryHeading()
 ok(diaryHeading && diaryHeading === diaryHeading2, '切回首页再进日记不重新挂载（DOM 节点身份不变）')
-ok(removedCount > removedAfterFirstDiary, `日记隐藏时其频道同样被移除，切回自动重建订阅（removed=${removedAfterFirstDiary} → ${removedCount}）`)
-ok(channelCount > channelsAfterDiary, `切回后频道按需重建而非常驻累积（${channelsAfterDiary} → ${channelCount}）`)
+ok(removedCount === 0, `来回切 tab 频道数不累积（removed=${removedCount}）`)
+ok(channelCount === channelsAfterDiary, `共享频道不随切 tab 反复重建（${channelsAfterDiary} → ${channelCount}）`)
+ok(
+  (activeBuses()[0]?.tables || []).includes('diary_entries'),
+  '切回后日记的订阅仍在总线上',
+)
 
 root.unmount()
 await tick(40)

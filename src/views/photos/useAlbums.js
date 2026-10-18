@@ -2,9 +2,11 @@
 // 从 Photos.jsx 抽出：页面与子组件都从这里拿数据，不再各自 filter / sort。
 import { useEffect, useState } from 'react'
 import { supabase } from '../../lib/supabase.js'
-import { signedMediaUrls, useSignedSrc } from '../../lib/storage.js'
+import { signedMediaUrls } from '../../lib/storage.js'
+import { useViewerSrcs } from '../../lib/mediaUrls.js'
 import { toast } from '../../lib/toast.jsx'
-import { fmtMonth, fmtFullDate, loadBrowse, saveBrowse, PREVIEW_TF } from './constants.js'
+import { fmtMonth, fmtFullDate, loadBrowse, saveBrowse } from './constants.js'
+import { columnsOf } from '../../lib/tableColumns.js'
 
 // ---------- 图集：派生数据 + 增删改 + 归类 ----------
 export function useAlbums({ coupleId, rows, albums, reload, reloadAlbums, active, onCreatedAlbum, onSelectDone }) {
@@ -130,7 +132,8 @@ export function usePhotoMemory({ coupleId, uid, rows, livePhotos, memberMap, ran
   const [memory, setMemory] = useState(null) // 随机回忆正在展示的照片
   const [exporting, setExporting] = useState(null) // { done, total } 打包进度
 
-  const memorySrc = useSignedSrc('photos', memory?.storage_path || null, PREVIEW_TF)
+  // 随机回忆是「一屏一张」的大图：同样给 1280 + 未变换两档，按屏幕挑
+  const memoryViewer = useViewerSrcs('photos', memory?.storage_path || null)
 
   // 换账号/换空间时重新播种浏览方式（先于保存 effect 声明，避免把旧空间的模式写进新 key）
   useEffect(() => {
@@ -180,7 +183,8 @@ export function usePhotoMemory({ coupleId, uid, rows, livePhotos, memberMap, ran
     {
       const { data, error } = await supabase
         .from('photos')
-        .select('*')
+        // 导出要的是清单而不是原图数据：同样只取列表字段（lib/tableColumns.js）
+        .select(columnsOf('photos'))
         .eq('couple_id', coupleId)
         .eq('album_id', album.id)
         .is('deleted_at', null)
@@ -252,7 +256,7 @@ export function usePhotoMemory({ coupleId, uid, rows, livePhotos, memberMap, ran
     setBrowseMode,
     memory,
     setMemory,
-    memorySrc,
+    memoryViewer,
     exporting,
     togglePin,
     rollMemory,

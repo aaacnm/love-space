@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import { useStore } from '../lib/store.jsx'
 import { supabase } from '../lib/supabase.js'
 import { toast } from '../lib/toast.jsx'
-import { useCollection, formatDateTime } from '../lib/hooks.js'
+import { useCollection, useLatestRow, formatDateTime } from '../lib/hooks.js'
+import { subscribeTable } from '../lib/realtimeBus.js'
 import { gotoTab } from '../lib/notify.js'
-import { Card } from './ui.jsx'
+import { Card, Modal } from './ui.jsx'
 
 function startOfToday() {
   const d = new Date()
@@ -32,19 +33,25 @@ export async function sendPoke(coupleId, userId, kind = 'poke') {
 // ---------- 首页卡片：发送 + 统计 ----------
 
 // compact = true 时压成一行横条（首页用），false 为完整大卡片
+//
+// 首页（compact）只查「最近一条戳」：今天/我/TA 各戳了多少次属于历史统计，
+// 为它把整个空间几千条 poke 拉下来不值（首页首屏请求直接少一条大查询）。
+// 想要统计就点「戳一戳记录」，弹窗里才挂载完整卡片 → 那时才拉全量。
 export function PokeSection({ compact = false }) {
   const { coupleId, user, partner } = useStore()
-  const { rows } = useCollection('pokes', coupleId)
+  const { rows } = useCollection('pokes', coupleId, { enabled: !compact })
+  const { row: latest } = useLatestRow('pokes', coupleId, { enabled: compact })
   const [sending, setSending] = useState(false)
   const [burst, setBurst] = useState(false)
   // 想聊聊按钮：sending → sent 两态，发完给一句确认再复原
   const [chatState, setChatState] = useState(null)
+  const [historyOpen, setHistoryOpen] = useState(false)
   const chatTimer = useRef(null)
 
   const mineCount = rows.filter((r) => r.from_user_id === user?.id).length
   const partnerCount = rows.length - mineCount
   const todayCount = rows.filter((r) => new Date(r.created_at) >= startOfToday()).length
-  const last = rows[0]
+  const last = compact ? latest : rows[0]
 
   const handleSend = async () => {
     if (sending) return
@@ -88,16 +95,31 @@ export function PokeSection({ compact = false }) {
         <div className="min-w-0 flex-1">
           <div className="font-bold text-cocoa">想 TA 就戳一下</div>
           <div className="mt-0.5 truncate text-xs text-cocoaSoft">
-            今天 {todayCount} 次 · 我 {mineCount} 次 · TA {partnerCount} 次
+            {last
+              ? `最近一次：${formatDateTime(last.created_at)}（${last.from_user_id === user?.id ? '我' : partner?.nickname || 'TA'}）`
+              : '还没有记录，戳第一下试试 ✨'}
           </div>
-          <button
-            onClick={handleChat}
-            disabled={chatState === 'sending'}
-            className="mt-1.5 rounded-full bg-cream px-3 py-1 text-xs font-bold text-rosy transition active:scale-95 disabled:opacity-60"
-          >
-            {chatState === 'sent' ? '已告诉 TA 啦 💬' : chatState === 'sending' ? '发送中…' : '💬 想和 TA 聊聊'}
-          </button>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            <button
+              onClick={handleChat}
+              disabled={chatState === 'sending'}
+              className="rounded-full bg-cream px-3 py-1 text-xs font-bold text-rosy transition active:scale-95 disabled:opacity-60"
+            >
+              {chatState === 'sent' ? '已告诉 TA 啦 💬' : chatState === 'sending' ? '发送中…' : '💬 想和 TA 聊聊'}
+            </button>
+            <button
+              onClick={() => setHistoryOpen(true)}
+              className="rounded-full bg-cream px-3 py-1 text-xs font-bold text-cocoaSoft transition active:scale-95"
+            >
+              戳一戳记录 ›
+            </button>
+          </div>
         </div>
+        {/* 历史统计放弹窗里：Modal 关着时不挂载，里面的 useCollection('pokes')
+            也就不发请求——首页首屏不再为「今天/我/TA 各几次」拉全表 */}
+        <Modal open={historyOpen} onClose={() => setHistoryOpen(false)} title="戳一戳记录">
+          <PokeSection />
+        </Modal>
       </Card>
     )
   }
@@ -156,51 +178,32 @@ export function PokeSection({ compact = false }) {
 export function PokeListener() {
   const { coupleId, user, myMember, partner } = useStore()
   const [toast, setToast] = useState(null)
-  const lastIdRef = useRef(null)
   const timerRef = useRef(null)
 
-  // 用自己的独立频道，避免和 useCollection 的频道重名冲突
+  // 订阅挂在 space-<coupleId> 共享频道上（不再单独建 poke-listener 频道）。
+  // 这里只处理「此刻收到的戳」，开机时不需要先查一条最新记录——
+  // 历史戳的展示归 PokeSection，未读提醒归 UnreadProvider。
   useEffect(() => {
     if (!coupleId || !user) return
-    let cancelled = false
 
-    const loadLatest = async () => {
-      const { data } = await supabase
-        .from('pokes')
-        .select('*')
-        .eq('couple_id', coupleId)
-        .order('created_at', { ascending: false })
-        .limit(1)
-      if (!cancelled) lastIdRef.current = data?.[0]?.id || null
-    }
-    loadLatest()
-
-    const channel = supabase
-      .channel(`poke-listener-${coupleId}`)
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'pokes', filter: `couple_id=eq.${coupleId}` },
-        (payload) => {
-          const row = payload.new
-          if (!row || row.from_user_id === user.id) return
-          lastIdRef.current = row.id
-          buzz(60)
-          setToast({ id: row.id, name: partner?.nickname || 'TA', kind: row.kind || 'poke' })
-          // 普通戳/摸摸头的 toast 用户已经看到 → 广播未读中心把首页卡片条目清掉；
-          // 「想聊聊」不广播：高优先级提醒要一直挂到用户真的去留言页
-          if ((row.kind || 'poke') !== 'chat') {
-            window.dispatchEvent(new CustomEvent('unread:seen', { detail: 'pokes' }))
-          }
-          clearTimeout(timerRef.current)
-          timerRef.current = setTimeout(() => setToast(null), 5000)
-        },
-      )
-      .subscribe()
+    const off = subscribeTable(coupleId, 'pokes', (payload) => {
+      if (payload.eventType !== 'INSERT') return
+      const row = payload.new
+      if (!row || row.from_user_id === user.id) return
+      buzz(60)
+      setToast({ id: row.id, name: partner?.nickname || 'TA', kind: row.kind || 'poke' })
+      // 普通戳/摸摸头的 toast 用户已经看到 → 广播未读中心把首页卡片条目清掉；
+      // 「想聊聊」不广播：高优先级提醒要一直挂到用户真的去留言页
+      if ((row.kind || 'poke') !== 'chat') {
+        window.dispatchEvent(new CustomEvent('unread:seen', { detail: 'pokes' }))
+      }
+      clearTimeout(timerRef.current)
+      timerRef.current = setTimeout(() => setToast(null), 5000)
+    })
 
     return () => {
-      cancelled = true
       clearTimeout(timerRef.current)
-      supabase.removeChannel(channel)
+      off()
     }
   }, [coupleId, user, myMember, partner])
 

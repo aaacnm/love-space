@@ -17,14 +17,26 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import webpush from 'npm:web-push@3.6.7'
 
-// ↓↓↓ 与 supabase/migrations/026_push.sql 中的 x-push-secret 保持一致 ↓↓↓
-const PUSH_SECRET = 'a8682cff87a9a282684fe7f294646de075d03730814965ee'
+// ---------- 密钥：只从部署环境变量读，绝不写进仓库 ----------
+// ⚠ 2026-10-17 轮换：原先这三个值硬编码在源码里，一旦仓库/部署包外泄就等于密钥外泄。
+//   现在全部走 Supabase Secrets（部署 → Edge Functions → Secrets）：
+//     supabase secrets set PUSH_SECRET=... VAPID_PUBLIC_KEY=... VAPID_PRIVATE_KEY=...
+//   数据库侧的 x-push-secret 由 038_push_secrets.sql 改成从 Vault 读同一个值。
+//   配不齐就明确报 500，不带任何回退（宁可停推，也不要静默用错密钥）。
+const PUSH_SECRET = Deno.env.get('PUSH_SECRET') || ''
+const VAPID_PUBLIC = Deno.env.get('VAPID_PUBLIC_KEY') || ''
+const VAPID_PRIVATE = Deno.env.get('VAPID_PRIVATE_KEY') || ''
 
-// ↓↓↓ VAPID 身份密钥对（公开钥也写在 src/lib/push.js 里） ↓↓↓
-const VAPID_PUBLIC = 'BHmLah0l1s5-aQkrWFVRgZrcttzRehRIfcAm0iCi3QewAZ-X1HwuI0H_UzaD9Ty7t6IQLBxJW-pYl2hUKaUeDKE'
-const VAPID_PRIVATE = 'Ul50lc97t2SJRXB7VNThX9g7Fuu8viTf9ubPQeTR_KM'
+const missingSecrets = () =>
+  [
+    !PUSH_SECRET ? 'PUSH_SECRET' : null,
+    !VAPID_PUBLIC ? 'VAPID_PUBLIC_KEY' : null,
+    !VAPID_PRIVATE ? 'VAPID_PRIVATE_KEY' : null,
+  ].filter(Boolean) as string[]
 
-webpush.setVapidDetails('mailto:love-journal@example.com', VAPID_PUBLIC, VAPID_PRIVATE)
+if (!missingSecrets().length) {
+  webpush.setVapidDetails('mailto:love-journal@example.com', VAPID_PUBLIC, VAPID_PRIVATE)
+}
 
 // 各表的「作者」字段：谁插入的行就通知另一个人
 const AUTHOR_COLS: Record<string, string> = {
@@ -36,6 +48,9 @@ const AUTHOR_COLS: Record<string, string> = {
   delete_requests: 'requester_user_id',
   period_daily_logs: 'user_id',
   pokes: 'from_user_id',
+  // 矛盾处理室（037）：邀请按「发起者」推给另一位；房间消息按发送者推给另一位
+  conflict_rooms: 'created_by',
+  conflict_room_messages: 'sender_user_id',
 }
 
 // 通知文案（和 App 内横幅同款语气）
@@ -68,6 +83,11 @@ function buildText(table: string, r: Record<string, unknown>): string {
       return '更新了生理期打卡'
     case 'pokes':
       return r.kind === 'chat' ? '想和你聊聊，快来 💬' : r.kind === 'comfort' ? '摸了摸你的头 🫂' : '戳了戳你，想你了 💗'
+    // ⚠ 矛盾处理室的通知绝不携带矛盾内容：只说「有邀请 / 有新消息」
+    case 'conflict_rooms':
+      return '邀请你加入矛盾处理室'
+    case 'conflict_room_messages':
+      return '在矛盾处理室说了新的话'
     default:
       return '有新动态啦，点开看看'
   }
@@ -77,6 +97,7 @@ function clickTab(table: string): string {
   if (table === 'photos' || table === 'delete_requests') return 'photos'
   if (table.startsWith('diary')) return 'diary'
   if (table === 'period_daily_logs') return 'period'
+  if (table.startsWith('conflict_room')) return 'peace'
   return 'messages'
 }
 
@@ -91,6 +112,13 @@ const json = (body: unknown, status = 200) =>
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
+
+  // 配置自检：密钥没配齐就直说，不要用「forbidden」把配置问题伪装成鉴权问题
+  const missing = missingSecrets()
+  if (missing.length) {
+    return json({ error: `Edge Function 缺少环境变量：${missing.join(', ')}`, hint: 'supabase secrets set …' }, 500)
+  }
+
   if (req.method === 'GET') return json({ ok: true, hint: 'POST with x-push-secret header' })
 
   // 共享密钥校验：数据库触发器与手动调用都必须带上
@@ -165,8 +193,10 @@ Deno.serve(async (req) => {
         sent++
       } catch (e) {
         const status = e?.statusCode || 0
-        // 404/410 = 订阅已失效（浏览器卸载/长时间未用），顺手清掉
-        if (status === 404 || status === 410) dead.push(s.endpoint)
+        // 404/410 = 订阅已失效（浏览器卸载/长时间未用）
+        // 403 = VAPID 密钥不匹配（换过密钥对后旧订阅会这样）→ 同样清掉，
+        //       用户下次开 App 时 enablePush 会重新登记（见 src/lib/push.js）
+        if (status === 404 || status === 410 || status === 403) dead.push(s.endpoint)
       }
     }),
   )

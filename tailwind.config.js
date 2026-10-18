@@ -21,8 +21,19 @@ export default {
         cocoaSoft: '#8A726C',
       },
       fontFamily: {
-        display: ['"ZCOOL KuaiLe"', '"Baloo 2"', 'cursive'],
-        body: ['Nunito', '"PingFang SC"', '"Hiragino Sans GB"', '"Microsoft YaHei"', 'sans-serif'],
+        // 装饰字体只覆盖拉丁区（自托管 33 KB 可变字体，见 index.css 的 @font-face）：
+        // 数字/字母走 Baloo 2，中文自然回落到系统字体——不再外链任何字体 CDN。
+        // 不保留 cursive 兜底：中文系统上它可能落到楷体一类的意外字形，反而更难看
+        display: ['"Baloo 2"', 'ui-rounded', '"PingFang SC"', '"Hiragino Sans GB"', '"Microsoft YaHei"', 'sans-serif'],
+        body: [
+          'system-ui',
+          '-apple-system',
+          '"PingFang SC"',
+          '"Hiragino Sans GB"',
+          '"Microsoft YaHei"',
+          '"Noto Sans SC"',
+          'sans-serif',
+        ],
       },
       boxShadow: {
         card: '0 6px 20px -6px rgba(233, 123, 146, 0.25)',

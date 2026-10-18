@@ -321,10 +321,12 @@ db.albums.push(
   { id: 'a2', couple_id: 'c1', name: '空空如也', description: null, created_at: '2026-06-02T00:00:00Z' },
 )
 db.photos.push(
-  { id: 'p1', couple_id: 'c1', author_user_id: 'u1', storage_path: 'photos/c1/p1.jpg', caption: '七月', album_id: 'a1', created_at: '2026-07-15T10:00:00Z' },
-  { id: 'p2', couple_id: 'c1', author_user_id: 'u2', storage_path: 'photos/c1/p2.jpg', caption: '', album_id: 'a1', created_at: '2026-08-15T10:00:00Z' },
-  { id: 'p3', couple_id: 'c1', author_user_id: 'u1', storage_path: 'photos/c1/p3.jpg', caption: '旧照', album_id: null, created_at: '2025-01-15T10:00:00Z' },
-  { id: 'p4', couple_id: 'c1', author_user_id: 'u2', storage_path: 'photos/c1/p4.jpg', original_path: 'originals/c1/p4.jpg', caption: '六月的海', album_id: 'a1', pinned_at: '2026-09-01T00:00:00Z', created_at: '2026-06-15T10:00:00Z' },
+  // 都带 thumb_path：2026-10 起旧照片会在后台补齐缩略图（thumbs/c1/<uuid>.jpg），
+  // 让封面 URL 不再含原图路径 —— 断言按「有缩略图」的新常态来，才有意义
+  { id: 'p1', couple_id: 'c1', author_user_id: 'u1', storage_path: 'photos/c1/p1.jpg', thumb_path: 'thumbs/c1/p1.jpg', caption: '七月', album_id: 'a1', created_at: '2026-07-15T10:00:00Z' },
+  { id: 'p2', couple_id: 'c1', author_user_id: 'u2', storage_path: 'photos/c1/p2.jpg', thumb_path: 'thumbs/c1/p2.jpg', caption: '', album_id: 'a1', created_at: '2026-08-15T10:00:00Z' },
+  { id: 'p3', couple_id: 'c1', author_user_id: 'u1', storage_path: 'photos/c1/p3.jpg', thumb_path: 'thumbs/c1/p3.jpg', caption: '旧照', album_id: null, created_at: '2025-01-15T10:00:00Z' },
+  { id: 'p4', couple_id: 'c1', author_user_id: 'u2', storage_path: 'photos/c1/p4.jpg', thumb_path: 'thumbs/c1/p4.jpg', original_path: 'originals/c1/p4.jpg', caption: '六月的海', album_id: 'a1', pinned_at: '2026-09-01T00:00:00Z', created_at: '2026-06-15T10:00:00Z' },
 )
 
 console.log('\n场景 1：未分组视图 + 顶部「回忆」入口')

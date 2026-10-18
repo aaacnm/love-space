@@ -1,7 +1,8 @@
 // 照片墙主体：选择条 + 浏览方式切换 + 网格/时间线两种排布 + 加载更多。
 // tile（照片瓦片）跟着走，因为它只依赖选择/拖拽这些本组件的局部状态。
 import SmartImg from '../../components/SmartImg.jsx'
-import { Spinner, EmptyState } from '../../components/ui.jsx'
+import { EmptyState } from '../../components/ui.jsx'
+import { PhotoGridSkeleton } from '../../components/Skeleton.jsx'
 import LoadMore from '../../components/LoadMore.jsx'
 
 export default function PhotoGrid({
@@ -29,7 +30,8 @@ export default function PhotoGrid({
   loadMore,
 }) {
   // 照片瓦片：网格（2 列）和时间线（3 列）共用
-  const tile = (p) => {
+  // i = 0 表示「首屏第一张」，只有它拿 fetchpriority=high
+  const tile = (p, i = -1) => {
     const picked = selected.includes(p.id)
     return (
       <div key={p.id} className="group relative animate-floatIn">
@@ -46,6 +48,8 @@ export default function PhotoGrid({
           }`}
         >
           <SmartImg
+            skeleton
+            priority={i === 0}
             src={thumbSrcOf(p)}
             alt={p.caption || '照片'}
             className={`aspect-square w-full object-cover transition ${selectMode ? '' : 'group-hover:scale-105'} ${
@@ -120,8 +124,9 @@ export default function PhotoGrid({
         </div>
       )}
 
-      {loading ? (
-        <Spinner />
+      {/* 首屏：还在拉数据且没有缓存可画时才出骨架（网格列数与真实浏览方式一致，回来时不重排） */}
+      {loading && list.length === 0 ? (
+        <PhotoGridSkeleton cols={browseMode === 'timeline' ? 3 : 2} />
       ) : list.length === 0 ? (
         <EmptyState
           emoji={active.kind === 'unfiled' ? '🗂' : '🖼️'}
@@ -148,12 +153,15 @@ export default function PhotoGrid({
               <p className="mb-2 text-xs font-bold text-cocoa">
                 {g.y}年{g.m}月 <span className="font-normal text-cocoaSoft/60">· {g.items.length} 张</span>
               </p>
-              <div className="grid grid-cols-3 gap-2">{g.items.map((p) => tile(p))}</div>
+              {/* 时间线：只有第一组的第一张算首屏首图（后面的组在折叠区外） */}
+              <div className="grid grid-cols-3 gap-2">
+                {g.items.map((p, i) => tile(p, gi === 0 ? i : -1))}
+              </div>
             </div>
           ))}
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-3">{pinnedFirst(list).map((p) => tile(p))}</div>
+        <div className="grid grid-cols-2 gap-3">{pinnedFirst(list).map((p, i) => tile(p, i))}</div>
       )}
 
       {/* 加载更多（空列表不渲染） */}

@@ -7,15 +7,19 @@ import { useStore } from '../lib/store.jsx'
 import { TabActiveContext } from '../lib/hooks.js'
 import { applyGenderTheme } from '../lib/theme.js'
 import Home from './Home.jsx'
+import { TAB_LOADERS } from './tabLoaders.js'
+import { prefetchTab, markLoaded, networkCheap, mostLikelyTab, recordTabHit } from './tabPrefetch.js'
 
 // 页面级代码分包：首屏只带首页的代码，其余 5 个页签各成独立分包。
-// 空闲时预热（见下方 effect），预热完成前点页签由 Suspense 兜底显示加载态。
+// 分包入口统一在 tabLoaders.js（lazy 与预加载共用，避免两边写两份 import）。
+// 什么时候把分包拉下来：按下页签立刻拉；空闲最多再预热一个（且省流/2g 不预热），
+// 见 tabPrefetch.js。预热完成前点页签由 Suspense 兜底显示加载态。
 // 页签保活逻辑不变：访问过就常驻（display:none 隐藏），分包代码只加载一次。
-const Diary = lazy(() => import('./Diary.jsx'))
-const Photos = lazy(() => import('./Photos.jsx'))
-const Peace = lazy(() => import('./Peace.jsx'))
-const Messages = lazy(() => import('./Messages.jsx'))
-const Period = lazy(() => import('./Period.jsx'))
+const Diary = lazy(TAB_LOADERS.diary)
+const Photos = lazy(TAB_LOADERS.photos)
+const Peace = lazy(TAB_LOADERS.peace)
+const Messages = lazy(TAB_LOADERS.messages)
+const Period = lazy(TAB_LOADERS.period)
 
 const VIEWS = {
   home: Home,
@@ -26,7 +30,8 @@ const VIEWS = {
   period: Period,
 }
 
-// 分包加载中的兜底占位（正常情况下预热先行，用户很难看到它）
+// 分包加载中的兜底占位。按下页签那一刻就开始拉分包（TabBar 的 onPrefetch），
+// 分包都不大（最大的 Photos 约 40 KB），通常几十毫秒就到了；弱网下<｜hy_place▁holder▁no▁813｜>后才看得到它。
 function TabFallback() {
   return (
     <div className="flex flex-col items-center justify-center gap-2 py-20">
@@ -45,15 +50,18 @@ export default function Dashboard() {
   }, [myMember?.gender])
   // 卸载时还原默认，避免登录态切换后残留旧主题
   useEffect(() => () => applyGenderTheme(null), [])
-  // 空闲时预热其余页签的分包：首屏渲染完、浏览器有空闲再拉代码，
-  // 不与首屏关键资源抢带宽；预热完成后点页签零等待
+  // ---------- 分包预热：一次最多一个，且弱网/省流时干脆不预热 ----------
+  // 以前是空闲时把 5 个分包一次拉齐，高速网络下点什么都零等待；但手机弱网时
+  // 那 5 个请求会跟首屏数据、缩略图抢带宽，反而拖慢首屏。现在：
+  //   · 按下页签（TabBar 的 onPrefetch）立刻拉 —— 有明确意图，不看网络；
+  //   · 后台只挑「最可能点的那一个」，且 saveData / 2g 直接跳过。
+  // 仍然挂在 requestIdleCallback 上：首屏渲染完、浏览器有空闲再拉。
   useEffect(() => {
+    if (!networkCheap()) return
+    const target = mostLikelyTab()
+    if (!target) return // 第一次用没有任何历史，就不瞎猜，等用户真的点击
     const warm = () => {
-      import('./Diary.jsx')
-      import('./Photos.jsx')
-      import('./Peace.jsx')
-      import('./Messages.jsx')
-      import('./Period.jsx')
+      prefetchTab(target)
     }
     if ('requestIdleCallback' in window) {
       const id = window.requestIdleCallback(warm, { timeout: 5000 })
@@ -69,6 +77,13 @@ export default function Dashboard() {
   // 切回时自动重新订阅并补拉一次数据（DOM 与已拉取数据仍保留，秒回体验不变）。
   const [visited, setVisited] = useState(['home'])
   if (!visited.includes(tab)) setVisited([...visited, tab]) // 渲染期登记，无空白帧
+
+  // 记录浏览习惯（tabPrefetch.js 据此挑「下一个最可能点的页签」，存在 localStorage）；
+  // 顺便把已挂载过的页签标记为已加载，后台预热不会重复惦记它们
+  useEffect(() => {
+    recordTabHit(tab)
+    visited.forEach(markLoaded)
+  }, [tab, visited])
 
   // 全局跳转：通知横幅 / 系统通知点击后切到对应页面（app:goto 事件）
   useEffect(() => {
@@ -105,7 +120,8 @@ export default function Dashboard() {
             )
           })}
         </main>
-        <TabBar active={tab} onChange={setTab} />
+        {/* 按下页签就开始拉分包：比点击事件早几十毫秒，且这部分请求反正要发 */}
+        <TabBar active={tab} onChange={setTab} onPrefetch={prefetchTab} />
         <PokeListener />
         <Notifier />
       </div>

@@ -105,6 +105,24 @@ union all
 union all
   select '032'::text as version, '032_paged_indexes.sql'::text as file, 'photos_couple_created_idx 索引已存在'::text as expects,
          (exists (select 1 from pg_indexes where schemaname='public' and indexname='photos_couple_created_idx')) as applied
+union all
+  select '033'::text as version, '033_bootstrap_space.sql'::text as file, 'public.bootstrap_space(date) 函数已存在'::text as expects,
+         (exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'bootstrap_space')) as applied
+union all
+  select '034'::text as version, '034_photo_thumb_guard.sql'::text as file, 'public.photos_missing_thumb() 函数已存在'::text as expects,
+         (exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'photos_missing_thumb')) as applied
+union all
+  select '035'::text as version, '035_list_query_indexes.sql'::text as file, 'moods_couple_date_idx 索引已存在'::text as expects,
+         (exists (select 1 from pg_indexes where schemaname='public' and indexname='moods_couple_date_idx')) as applied
+union all
+  select '036'::text as version, '036_period_rls.sql'::text as file, 'period_logs / period_settings 的 relrowsecurity 均为 true'::text as expects,
+         ((select bool_and(c.relrowsecurity) from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname='public' and c.relname in ('period_logs', 'period_settings'))) as applied
+union all
+  select '037'::text as version, '037_conflict_rooms.sql'::text as file, 'public.conflict_rooms 表已存在'::text as expects,
+         (exists (select 1 from pg_tables where schemaname='public' and tablename='conflict_rooms')) as applied
+union all
+  select '038'::text as version, '038_push_secrets.sql'::text as file, 'public.push_secret() 函数已存在'::text as expects,
+         (exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname='public' and p.proname='push_secret')) as applied
 ) v
 order by v.version;
 
@@ -207,6 +225,24 @@ union all
 union all
   select '032'::text as version, '032_paged_indexes.sql'::text as file, 'photos_couple_created_idx 索引已存在'::text as expects,
          (exists (select 1 from pg_indexes where schemaname='public' and indexname='photos_couple_created_idx')) as applied
+union all
+  select '033'::text as version, '033_bootstrap_space.sql'::text as file, 'public.bootstrap_space(date) 函数已存在'::text as expects,
+         (exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'bootstrap_space')) as applied
+union all
+  select '034'::text as version, '034_photo_thumb_guard.sql'::text as file, 'public.photos_missing_thumb() 函数已存在'::text as expects,
+         (exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'photos_missing_thumb')) as applied
+union all
+  select '035'::text as version, '035_list_query_indexes.sql'::text as file, 'moods_couple_date_idx 索引已存在'::text as expects,
+         (exists (select 1 from pg_indexes where schemaname='public' and indexname='moods_couple_date_idx')) as applied
+union all
+  select '036'::text as version, '036_period_rls.sql'::text as file, 'period_logs / period_settings 的 relrowsecurity 均为 true'::text as expects,
+         ((select bool_and(c.relrowsecurity) from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname='public' and c.relname in ('period_logs', 'period_settings'))) as applied
+union all
+  select '037'::text as version, '037_conflict_rooms.sql'::text as file, 'public.conflict_rooms 表已存在'::text as expects,
+         (exists (select 1 from pg_tables where schemaname='public' and tablename='conflict_rooms')) as applied
+union all
+  select '038'::text as version, '038_push_secrets.sql'::text as file, 'public.push_secret() 函数已存在'::text as expects,
+         (exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname='public' and p.proname='push_secret')) as applied
 ) v;
 
 -- ---------- 3. CLI 视角：这个库有没有 Supabase CLI 的迁移记录 ----------

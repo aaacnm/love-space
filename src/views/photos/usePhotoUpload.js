@@ -92,10 +92,11 @@ export function usePhotoUpload({ coupleId, user, rows, active, reload }) {
       const path = await uploadOne(coupleId, main)
       if (!path) return null
 
-      let thumbPath = null
-      if (p.thumb) {
-        thumbPath = await uploadOne(coupleId, p.thumb, 'thumbs') // 失败返回 null，不阻塞
-      }
+      // 缩略图是**强制**的：480 压缩万一失败就退用浏览图（同样是压缩过的小图），
+      // 不能留空 —— 留空会让网格兜底去签 storage_path，那可能是几 MB 的原图
+      const thumbSource = p.thumb || p.file
+      let thumbPath = await uploadOne(coupleId, thumbSource, 'thumbs') // 失败返回 null，不阻塞
+      if (!thumbPath && p.thumb) thumbPath = await uploadOne(coupleId, p.file, 'thumbs')
 
       let originalPath = null
       if (keepOrig) {

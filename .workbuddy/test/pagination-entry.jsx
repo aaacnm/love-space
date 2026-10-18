@@ -2,11 +2,13 @@
 // Probe 暴露 usePagedCollection 的控制句柄与状态；LM 系列测 LoadMore 组件渲染
 import { useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { usePagedCollection, TabActiveContext } from '../../src/lib/hooks.js'
+import { usePagedCollection, TabActiveContext, PAGE_SIZE } from '../../src/lib/hooks.js'
 import LoadMore from '../../src/components/LoadMore.jsx'
 
 function Probe() {
   const { rows, loading, loadingMore, hasMore, reload, loadMore } = usePagedCollection('photos', 'c1')
+  // 分页大小从源码里读，断言按它算 —— 以后调 PAGE_SIZE 不用改用例
+  window.__pageSize = PAGE_SIZE
   window.__probe = { reload, loadMore, rows, loading, loadingMore, hasMore }
   return <div id="probe">{rows.length}:{String(hasMore)}</div>
 }

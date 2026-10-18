@@ -9,8 +9,11 @@
 // 没有 PushManager——这正是 Notifier 里 noNotifyApi 提示「先添加到主屏幕」的原因。
 import { supabase } from './supabase.js'
 
-// VAPID 公钥（与 supabase/functions/push-send 里的私钥成对）
-const VAPID_PUBLIC_KEY = 'BHmLah0l1s5-aQkrWFVRgZrcttzRehRIfcAm0iCi3QewAZ-X1HwuI0H_UzaD9Ty7t6IQLBxJW-pYl2hUKaUeDKE'
+// VAPID 公钥（与 push-send 里的私钥成对）
+// ⚠ 公钥本来就可以公开（浏览器拿它订阅），**私钥绝不能进仓库** ——
+//   它现在只存在于 Edge Function 的环境变量（Supabase Secrets）里，见 PUSH_SETUP.md。
+//   2026-10-17 轮换过一次：旧的订阅会失效，App 里重新点「开启提醒」即可。
+const VAPID_PUBLIC_KEY = 'BGenotm3QSHOv-cNSAyioIe_jVKUCeuBPH8KuYzF9tlkTmL2QT-nfNbHbBbp3caO4i0HWlmW1qyC0aErgI7XlHo'
 
 export function pushSupported() {
   return (

@@ -85,6 +85,47 @@ describe('supabase/migrations 目录', () => {
   })
 })
 
+describe('行级安全：每张表都必须真的开着 RLS', () => {
+  // ⚠ 这条是拿真实事故换来的：020_period.sql 给 period_logs / period_settings
+  //   写好了按 couple_id 隔离的 policy，却**漏了 enable row level security**。
+  //   RLS 关闭时 policy 根本不参与过滤 —— 表和 policy 都在，等于门没锁，
+  //   任何有表权限的角色（anon / authenticated 默认就有）都能跨空间读写敏感数据。
+  //   只看「有没有 policy」是看不出问题的，必须盯住 enable 这一句。
+  // 整行注释要剥掉：否则把 enable 那句注释掉（手工改库时常这么干）也能蒙混过关
+  const allText = () =>
+    migrations
+      .map((m) => m.text)
+      .join('\n')
+      .split('\n')
+      .filter((l) => !l.trimStart().startsWith('--'))
+      .join('\n')
+
+  const createdTables = () => {
+    const out = []
+    const re = /create\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?([a-z_]+)\s*\(/g
+    for (const m of migrations) {
+      for (const hit of m.text.matchAll(re)) if (!out.includes(hit[1])) out.push(hit[1])
+    }
+    return out
+  }
+
+  it('migrations 里新建的每一张表都执行过 enable/force row level security', () => {
+    const text = allText()
+    const enabled = new Set()
+    const re = /alter\s+table\s+(?:if\s+exists\s+)?(?:public\.)?([a-z_]+)\s+(enable|force|disable)\s+row\s+level\s+security/g
+    for (const hit of text.matchAll(re)) {
+      if (hit[2] === 'disable') enabled.delete(hit[1])
+      else enabled.add(hit[1])
+    }
+    const missing = createdTables().filter((t) => !enabled.has(t))
+    expect(missing, `这些表建了却没开 RLS（policy 不生效 = 没锁门）：${missing.join(', ')}`).toEqual([])
+  })
+
+  it('没有任何迁移把 RLS 关掉', () => {
+    expect(allText()).not.toMatch(/disable\s+row\s+level\s+security/i)
+  })
+})
+
 describe('生成物必须与 migrations/ 保持一致', () => {
   it('schema.sql 和 check_migration_status.sql 是最新的（跑 npm run db:sync 可重建）', () => {
     const drift = driftList()

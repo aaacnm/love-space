@@ -1,13 +1,14 @@
 // 一张留言便利贴：内容（文字/语音/图片）+ 表情回应 + 评论入口 + 隐藏/删除。
 // 从 Messages.jsx 抽出，所有交互都由页面传入的回调完成。
 import { Avatar } from '../../components/Avatar.jsx'
+import SmartImg from '../../components/SmartImg.jsx'
 import VoiceNote from '../../components/VoiceNote.jsx'
 import { formatDateTime } from '../../lib/hooks.js'
 import { REACTION_EMOJIS, noteStyle, digest } from './constants.js'
 
 // 留言正文：文字 + 语音 + 图片（一条留言可同时含多种，实际发送时互斥）。
 // 单独导出——评论弹窗顶部也要展示被评论的那条。
-export function MessageBody({ m, voiceSrcs, imgSrcs, onOpenImage }) {
+export function MessageBody({ m, voiceSrcs, imgSrcs, onOpenImage, imgPriority = false }) {
   return (
     <>
       {m.content ? (
@@ -21,13 +22,20 @@ export function MessageBody({ m, voiceSrcs, imgSrcs, onOpenImage }) {
         </div>
       ) : null}
       {m.image_path ? (
-        <img
-          src={imgSrcs[m.image_path] || ''}
+        // 签名 URL 没回来前 src 为空：走 SmartImg 的骨架占位，不再渲染 src="" 的 <img>
+        // （空 src 会让浏览器把当前页面当图片再请求一次，多一个请求还闪一下）
+        // img 与骨架共用 aspect-[4/3]：高度一开始就定死。等到图下载完才撑开 = 布局跳动，
+        // 这正是最影响体感的位移。要看完整比例点开灯箱（那里 contain + 固定容器，不裁切）。
+        <SmartImg
+          src={imgSrcs[m.image_path]}
           alt="图片留言"
-          loading="lazy"
-          decoding="async"
+          skeleton
+          priority={imgPriority}
+          skeletonClass={`aspect-[4/3] w-full rounded-xl ${m.content || m.voice_path ? 'mt-2' : ''}`}
           onClick={() => onOpenImage?.(m)}
-          className={`w-full cursor-zoom-in rounded-xl bg-cream/60 object-cover ${m.content || m.voice_path ? 'mt-2' : ''}`}
+          className={`aspect-[4/3] w-full cursor-zoom-in rounded-xl bg-cream/60 object-cover ${
+            m.content || m.voice_path ? 'mt-2' : ''
+          }`}
         />
       ) : null}
     </>
@@ -42,6 +50,7 @@ export default function MessageCard({
   flagOf,
   voiceSrcs,
   imgSrcs,
+  imgPriority = false,
   commentsOf,
   reactionsOf,
   reactFor,
@@ -88,7 +97,13 @@ export default function MessageCard({
 
       {m.reply_to && renderReplyQuote()}
       <div className={m.reply_to ? 'mt-1' : 'mt-1.5'}>
-        <MessageBody m={m} voiceSrcs={voiceSrcs} imgSrcs={imgSrcs} onOpenImage={setViewingImg} />
+        <MessageBody
+          m={m}
+          voiceSrcs={voiceSrcs}
+          imgSrcs={imgSrcs}
+          onOpenImage={setViewingImg}
+          imgPriority={imgPriority}
+        />
       </div>
 
       {/* 动作条：表情回应 chips + 😊+ / 评论（隐藏态不显示） */}

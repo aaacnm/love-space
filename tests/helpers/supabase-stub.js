@@ -134,7 +134,15 @@ function makeQuery(stub, table) {
     }
 
     if (op === 'select') {
-      stub.log.select.push({ table, filters: clone(filters) })
+      // columns / limit / range 也记下来：
+      // 「只查需要的字段」「只查一条」「只查一页」这类优化靠它断言
+      stub.log.select.push({
+        table,
+        columns: selectCols,
+        filters: clone(filters),
+        limit: limitN,
+        range: rangeCfg ? { ...rangeCfg } : null,
+      })
       if (!stub.db[table]) stub.db[table] = []
       let rows = sortRows(rowsOf())
       if (rangeCfg) rows = rows.slice(rangeCfg.from, rangeCfg.to + 1)
@@ -209,20 +217,27 @@ function makeQuery(stub, table) {
 }
 
 export function createSupabaseStub({ db = {}, files = [] } = {}) {
+  let channelSeq = 0
   const stub = {
     db,
     files: new Set(files), // storage 里「存在」的文件路径
     failures: {}, // 'insert:photos' / 'rpc:approve_delete_request' 等
     rpcHandlers: {},
+    // 登录态：session 供 getSession（本地恢复）用，authUser 供 getUser（联网校验）用
+    session: null,
+    authUser: null,
+    anonUser: null,
     log: {
       select: [],
       insert: [],
       update: [],
       delete: [],
       rpc: [],
+      auth: [],
       upload: [],
       remove: [],
       sign: [],
+      broadcast: [],
     },
     channels: new Map(),
     removedChannels: [],
@@ -273,8 +288,25 @@ export function createSupabaseStub({ db = {}, files = [] } = {}) {
       }
       return fired.length
     },
-    activeChannels: () => [...stub.channels.keys()],
+    /** 当前还活着的频道（同名多实例会重复出现多次） */
+    activeChannels: () => [...stub.channels.values()].map((c) => c.name),
     removedChannelCount: () => stub.removedChannels.length,
+    // ---------- 登录态 ----------
+    /** 预设已登录用户：同时作用于 getSession（本地恢复）与 getUser（联网校验） */
+    setUser: (u) => {
+      stub.session = u ? { user: u } : null
+      stub.authUser = u || null
+    },
+    /** 让 getUser 返回 null（模拟会话过期/被吊销），getSession 仍保留旧值 */
+    expireSession: () => {
+      stub.authUser = null
+    },
+    /** signInAnonymously 会返回的用户（默认 anon-1） */
+    setAnonUser: (u) => {
+      stub.anonUser = u
+    },
+    /** 认证调用流水：['getSession', 'getUser', 'signInAnonymously', …] */
+    authCalls: () => stub.log.auth,
   }
 
   const takeFail = (key) => {
@@ -303,7 +335,15 @@ export function createSupabaseStub({ db = {}, files = [] } = {}) {
       stub.log.sign.push({ bucket, path, ttl, opts })
       const sFail = takeFail('storage:sign')
       if (sFail) return { data: null, error: sFail }
-      return { data: { signedUrl: `https://sign.test/${bucket}/${path}?token=1` }, error: null }
+      // 带变换的地址要真的带上变换参数：真实的 Storage 变换 URL 就是这样，
+      // 也才能验证「480 缩略图」和「原尺寸」是两条不同的缓存
+      const tf = opts?.transform
+        ? new URLSearchParams(Object.entries(opts.transform).map(([k, v]) => [k, String(v)])).toString()
+        : ''
+      return {
+        data: { signedUrl: `https://sign.test/${bucket}/${path}?token=1${tf ? `&${tf}` : ''}` },
+        error: null,
+      }
     },
     async createSignedUrls(paths, ttl) {
       stub.log.sign.push({ bucket, paths: [...paths], ttl })
@@ -333,17 +373,40 @@ export function createSupabaseStub({ db = {}, files = [] } = {}) {
       url: 'https://storage.test',
       from: storageFrom,
     },
+    // 同一频道名允许存在多个实例（共同播放器里「两个人」各订阅一次）。
+    // 所以 Map 按内部自增 id 存，delete/清理只影响自己那一个。
     channel(name) {
-      const ch = { name, handlers: [], status: 'SUBSCRIBED' }
-      stub.channels.set(name, ch)
+      const id = `${name}#${++channelSeq}`
+      const ch = { id, name, handlers: [], broadcasts: [], status: 'SUBSCRIBED' }
+      stub.channels.set(id, ch)
       const self = {
-        // 业务代码把 channel 对象交给 removeChannel，必须带上 name 才能对上号
+        id,
         name,
         on: (type, cfg, cb) => {
           if (type === 'postgres_changes') {
             ch.handlers.push({ event: cfg.event, table: cfg.table, filter: cfg.filter, cb })
+          } else if (type === 'broadcast') {
+            ch.broadcasts.push({ event: cfg.event, cb })
           }
           return self
+        },
+        // broadcast：投递给「同名房间的其他实例」，不回环给自己
+        // （对齐 Realtime 公共频道的 self:false 语义）
+        send: (msg) => {
+          if (msg?.type === 'broadcast') {
+            const hit = []
+            for (const other of stub.channels.values()) {
+              if (other.id === id || other.name !== name) continue
+              for (const h of other.broadcasts) {
+                if (h.event === msg.event) {
+                  hit.push(h)
+                  h.cb({ payload: msg.payload })
+                }
+              }
+            }
+            stub.log.broadcast.push({ name, event: msg.event, payload: clone(msg.payload), reached: hit.length })
+          }
+          return Promise.resolve('ok')
         },
         subscribe: () => {
           ch.status = 'SUBSCRIBED'
@@ -354,13 +417,39 @@ export function createSupabaseStub({ db = {}, files = [] } = {}) {
       return self
     },
     removeChannel(ch) {
-      const name = typeof ch === 'string' ? ch : ch?.name
-      stub.channels.delete(name)
-      stub.removedChannels.push(name)
+      let key = null
+      if (ch && typeof ch === 'object' && ch.id && stub.channels.has(ch.id)) key = ch.id
+      const wantName = typeof ch === 'string' ? ch : ch?.name
+      if (key == null) {
+        for (const [k, v] of stub.channels) {
+          if (v.name === wantName) {
+            key = k
+            break
+          }
+        }
+      }
+      if (key == null) return
+      stub.channels.delete(key)
+      stub.removedChannels.push(wantName)
     },
     auth: {
+      // 本地恢复：不发网络请求（真实实现从 localStorage 读）
+      async getSession() {
+        stub.log.auth.push('getSession')
+        const s = stub.session
+        return { data: { session: s ? { user: s.user, access_token: 'stub' } : null }, error: null }
+      },
+      // 联网校验：比 getSession 权威，能刷新过期 token
       async getUser() {
-        return { data: { user: null }, error: null }
+        stub.log.auth.push('getUser')
+        return { data: { user: stub.authUser || null }, error: null }
+      },
+      async signInAnonymously() {
+        stub.log.auth.push('signInAnonymously')
+        const u = stub.anonUser || { id: 'anon-1', is_anonymous: true }
+        stub.session = { user: u }
+        stub.authUser = u
+        return { data: { user: u, session: { user: u } }, error: null }
       },
     },
   }

@@ -63,14 +63,16 @@ FakeNotification.requestPermission = async () => {
 Object.defineProperty(window, 'Notification', { value: FakeNotification, configurable: true, writable: true })
 
 // ---------- 2. supabase stub（channel 记录回调，测试手动触发）----------
-const handlers = {} // table -> callback
+// ⚠ 现在通知走空间级共享频道（lib/realtimeBus.js）：一张表会登记两条监听
+//   （主监听 event:'*' + DELETE 兜底），所以回调按表收集成数组，触发时全部调用。
+const handlers = {} // table -> [callback]
 const removedChannels = []
 const supabaseStub = {
   channel: (name) => {
     const ch = {
       name,
       on(event, cfg, cb) {
-        if (cfg && cfg.table) handlers[cfg.table] = cb
+        if (cfg && cfg.table) (handlers[cfg.table] ||= []).push(cb)
         return ch
       },
       subscribe() {
@@ -106,7 +108,8 @@ await esbuild.build({
     {
       name: 'stubs',
       setup(b) {
-        b.onResolve({ filter: /lib\/supabase\.js$/ }, () => ({ path: 'supa-stub', namespace: 'stub' }))
+        // 匹配到 supabase.js 就行：总线（realtimeBus.js）里是 './supabase.js'
+        b.onResolve({ filter: /supabase\.js$/ }, () => ({ path: 'supa-stub', namespace: 'stub' }))
         b.onResolve({ filter: /lib\/store\.jsx$/ }, () => ({ path: 'store-stub', namespace: 'stub' }))
         b.onLoad({ filter: /.*/, namespace: 'stub' }, (args) => ({
           contents:
@@ -125,7 +128,8 @@ const React = require('react')
 const ReactDOMClient = require('react-dom/client')
 const { Notifier } = require(out)
 
-const fire = (table, row) => handlers[table]({ new: row })
+// 带上 eventType：总线按事件类型分发，通知只认 INSERT
+const fire = (table, row) => (handlers[table] || []).forEach((cb) => cb({ eventType: 'INSERT', new: row }))
 const bodyText = () => document.body.textContent || ''
 
 async function mount() {
@@ -243,7 +247,9 @@ ok(document.title === origTitle, '回前台后标题恢复')
 
 root.unmount()
 await tick(40)
-ok(removedChannels.some((n) => n.includes('notifier')), '卸载时移除 realtime 频道')
+// 通知不再自建 notifier-<cid> 频道：它挂在空间级共享频道 space-<cid> 上，
+// 最后一个订阅者退订时由总线把频道撤掉
+ok(removedChannels.some((n) => n.startsWith('space-')), '卸载时移除 realtime 频道（空间级共享频道）')
 
 console.log('\n场景 E：权限被拒 → 补救指引卡；「检查一下」在未授权时给出提示')
 window.localStorage.removeItem('notify_prompt_dismissed')

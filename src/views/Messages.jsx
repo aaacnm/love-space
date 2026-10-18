@@ -1,31 +1,61 @@
 // 留言板：写操作已拆到 messages/useMessageActions.js、卡片渲染到 messages/MessageCard.jsx，
 // 本文件只做编排——取数据、算筛选、把状态分给子组件。
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useStore } from '../lib/store.jsx'
 import { useCollection, usePagedCollection, formatDateTime, todayStr } from '../lib/hooks.js'
-import { Button, EmptyState, Spinner, SectionTitle, ConfirmModal, Modal, TextArea } from '../components/ui.jsx'
+import { SCOPE_FALLBACK_LIMIT, scopeFilter } from '../lib/tableColumns.js'
+import { Button, EmptyState, SectionTitle, ConfirmModal, Modal, TextArea } from '../components/ui.jsx'
+import { NoteListSkeleton, FilterBarSkeleton } from '../components/Skeleton.jsx'
 import { Avatar } from '../components/Avatar.jsx'
 import VoiceRecorderModal from '../components/VoiceRecorderModal.jsx'
 import SmartImg from '../components/SmartImg.jsx'
 import TrashModal from '../components/TrashModal.jsx'
 import { isExpiredAt } from '../lib/trash.js'
-import { useSignedMap, useSignedSrc } from '../lib/storage.js'
+import { useSignedMap } from '../lib/storage.js'
+import { useThumbUrls, useViewerSrcs, viewerSrcSet, VIEWER_SIZES } from '../lib/mediaUrls.js'
+import { whenIdle } from '../lib/idle.js'
 import LoadMore from '../components/LoadMore.jsx'
 import { useMessageActions } from './messages/useMessageActions.js'
 import MessageCard, { MessageBody } from './messages/MessageCard.jsx'
-import { PREVIEW_TF, monthKey, dayKey, monthLabel, noteStyle } from './messages/constants.js'
+import { monthKey, dayKey, monthLabel, noteStyle } from './messages/constants.js'
 
 export default function Messages() {
   const { coupleId, user, members } = useStore()
-  // 主留言流分页：首屏最近 30 条，滚动到底加载更早的（数据量大时首屏不再拉全表）
+  // 主留言流分页：首屏最近 PAGE_SIZE 条（默认 18），滚动到底加载更早的
   const { rows, loading, loadingMore, hasMore, loadMore } = usePagedCollection('messages', coupleId, {
     orderBy: 'created_at',
     ascending: false,
   })
-  const { rows: hiddenRows, reload: reloadHidden } = useCollection('message_hidden', coupleId)
-  // 评论是双方共享的内容（与「删除/隐藏只对自己生效」不同），按 couple 订阅
-  const { rows: comments } = useCollection('message_comments', coupleId, { orderBy: 'created_at', ascending: true })
-  const { rows: reactions, reload: reloadReactions } = useCollection('message_reactions', coupleId)
+  // 副表（评论 / 回应 / 隐藏记录）只跟**当前已加载的留言**有关：
+  // 按这批 id 过滤，翻页时随主列表一起增长，而不是每次都把整个空间的历史全拉回来。
+  // id 超过上限（URL 会太长）时 scopeFilter 返回 null，退化成 limit 兜底。
+  const msgIds = useMemo(() => rows.map((m) => m.id), [rows])
+  const msgScope = useMemo(() => scopeFilter('message_id', msgIds), [msgIds])
+  const { rows: hiddenRows, reload: reloadHidden } = useCollection('message_hidden', coupleId, {
+    enabled: msgIds.length > 0,
+    filters: msgScope,
+    limit: msgScope ? null : SCOPE_FALLBACK_LIMIT,
+  })
+  // 评论是双方共享的内容（与「删除/隐藏只对自己生效」不同），按 couple 订阅。
+  // 但只在第一次点开某条留言的评论面板时才拉：卡片上的「💬 评论」按钮本来就是入口，
+  // 没数据的时候显示「评论」二字而不是 0，不会误导。
+  const [commentsReady, setCommentsReady] = useState(false)
+  const { rows: comments } = useCollection('message_comments', coupleId, {
+    orderBy: 'created_at',
+    ascending: true,
+    enabled: commentsReady && msgIds.length > 0,
+    filters: msgScope,
+    limit: msgScope ? null : SCOPE_FALLBACK_LIMIT,
+  })
+  // 表情回应直接长在卡片上（emoji + 数字），不能等到点开才拉；
+  // 但也不用和主列表抢首屏 —— 等画面画完再补，chips 晚一帧出现而已
+  const [reactionsReady, setReactionsReady] = useState(false)
+  const { rows: reactions, reload: reloadReactions } = useCollection('message_reactions', coupleId, {
+    enabled: reactionsReady && msgIds.length > 0,
+    filters: msgScope,
+    limit: msgScope ? null : SCOPE_FALLBACK_LIMIT,
+  })
+  useEffect(() => whenIdle(() => setReactionsReady(true), { timeout: 1500, fallback: 300 }), [])
 
   const [viewingImg, setViewingImg] = useState(null) // 灯箱：正在看大图的留言
   const [voiceOpen, setVoiceOpen] = useState(false)
@@ -38,16 +68,23 @@ export default function Messages() {
   const commentsOf = (id) => comments.filter((c) => c.message_id === id)
   const rowsById = Object.fromEntries(rows.map((m) => [m.id, m]))
 
-  // ---------- 私有桶签名 URL（photos/voice，一次批量签，内存缓存） ----------
+  // ---------- 私有桶签名 URL ----------
+  // 图片走 480 缩略图（卡片只有几厘米宽，直接签 1280 的图是纯浪费），
+  // 语音是音频、没有变换可用，仍然批量签真实文件
   const voiceSrcs = useSignedMap('voice', rows.filter((m) => m.voice_path).map((m) => m.voice_path))
-  const imgSrcs = useSignedMap('photos', rows.filter((m) => m.image_path).map((m) => m.image_path))
-  // 灯箱大图按需单签 + contain 变换
-  const lightboxSrc = useSignedSrc('photos', viewingImg?.image_path || null, PREVIEW_TF)
+  const imgSrcs = useThumbUrls('photos', rows.filter((m) => m.image_path).map((m) => m.image_path))
+  // 灯箱大图：1280 预览 + 未变换两档，交给 srcset 按屏幕挑
+  const viewer = useViewerSrcs('photos', viewingImg?.image_path || null)
 
   // 删除/隐藏都是「只对自己生效」，按人各存一份；有记录 = 我这里不可见
   const flagOf = new Map(hiddenRows.filter((h) => h.user_id === user?.id).map((h) => [h.message_id, !!h.permanent]))
   const visibleMsgs = rows.filter((m) => !flagOf.has(m.id))
   const hiddenList = rows.filter((m) => flagOf.get(m.id) === false)
+  // 首屏第一张配图所在的留言：只有它拿 fetchpriority=high
+  const firstImageId = useMemo(
+    () => (visibleMsgs.find((m) => m.image_path) || {}).id || '',
+    [visibleMsgs],
+  )
 
   // 所有写操作：发送 / 回应 / 删除 / 恢复 / 评论 / 隐藏，全在 messages/useMessageActions.js
   const act = useMessageActions({
@@ -92,6 +129,11 @@ export default function Messages() {
     purge,
     toggleHide,
   } = act
+
+  // 打开过一次评论面板就把评论订阅挂上（之后保持常驻，翻页/切走再回来不用重新等）
+  useEffect(() => {
+    if (commenting) setCommentsReady(true)
+  }, [commenting])
 
   // ---- 混合时间流：只放留言本体（文字/语音/图片/回复），按时间倒序（新的在上）----
   // 评论是附着内容，收进留言详情弹窗（点卡上的 💬），不再混入主流，避免总页太杂
@@ -158,8 +200,9 @@ export default function Messages() {
         </div>
       </div>
 
-      {/* 日期筛选：先选月份，也可精确到某一天 */}
-      {!loading && months.length > 0 && (
+      {/* 日期筛选：先选月份，也可精确到某一天。
+          有数据就立刻画真筛选条（含缓存数据），完全没有才出同高度的骨架，避免回来时跳一下 */}
+      {months.length > 0 ? (
         <div className="mb-3 space-y-2">
           <div className="flex gap-2 overflow-x-auto pb-1">
             <button
@@ -215,10 +258,12 @@ export default function Messages() {
             <span className="ml-auto text-xs font-bold text-cocoaSoft/70">{filterActive ? `${filtered.length} 条` : ''}</span>
           </div>
         </div>
-      )}
+      ) : loading ? (
+        <FilterBarSkeleton />
+      ) : null}
 
-      {loading ? (
-        <Spinner />
+      {loading && visibleMsgs.length === 0 ? (
+        <NoteListSkeleton />
       ) : filtered.length === 0 ? (
         <EmptyState
           emoji={feed.length === 0 ? '💌' : '🔍'}
@@ -235,6 +280,8 @@ export default function Messages() {
               flagOf={flagOf}
               voiceSrcs={voiceSrcs}
               imgSrcs={imgSrcs}
+              // 首屏第一张图才标 high：全标等于没标（其余保持 lazy）
+              imgPriority={f.m.id === firstImageId}
               commentsOf={commentsOf}
               reactionsOf={reactionsOf}
               reactFor={reactFor}
@@ -416,7 +463,20 @@ export default function Messages() {
       <Modal open={!!viewingImg} onClose={() => setViewingImg(null)} title="🖼️ 图片留言">
         {viewingImg && (
           <div>
-            <SmartImg eager src={lightboxSrc} alt="图片留言" className="w-full rounded-2xl bg-cream/60" />
+            {/* 固定高度容器 + contain：下面是作者行，图撑开会把它推走 */}
+            <div className="flex h-[52vh] w-full items-center justify-center rounded-2xl bg-cream/60">
+              <SmartImg
+                eager
+                priority
+                skeleton
+                src={viewer.preview || viewer.full}
+                srcSet={viewerSrcSet(viewer)}
+                sizes={VIEWER_SIZES}
+                alt="图片留言"
+                skeletonClass="h-full w-full rounded-2xl"
+                className="max-h-full w-full rounded-2xl object-contain"
+              />
+            </div>
             <div className="mt-2 flex items-center gap-1 text-xs font-bold text-cocoaSoft/70">
               <Avatar member={memberMap[viewingImg.author_user_id]} size="sm" />
               <span>{memberMap[viewingImg.author_user_id]?.nickname || 'TA'}</span>

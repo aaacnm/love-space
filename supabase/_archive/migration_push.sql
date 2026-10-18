@@ -58,7 +58,8 @@ begin
     url := 'https://wengwenilnywpijuraqn.supabase.co/functions/v1/push-send',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
-      'x-push-secret', 'a8682cff87a9a282684fe7f294646de075d03730814965ee'
+      -- ⚠ 旧密钥已轮换并视为泄露，此处抹除（见 supabase/migrations/038_push_secrets.sql）
+      'x-push-secret', ''
     ),
     body := jsonb_build_object(
       'type', TG_OP,

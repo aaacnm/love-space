@@ -4,6 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <meta name="theme-color" content="#F6A6B4" />
+    <!-- YouTube 嵌入播放器需要收到当前站点的来源信息（HTTP Referer）。 -->
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
     <title>我们的恋爱手账 💕</title>
     <!-- PWA：添加到手机主屏幕（桌面图标） -->
     <link rel="manifest" href="/manifest.webmanifest" />
@@ -13,12 +15,8 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="恋爱手账" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=ZCOOL+KuaiLe&family=Baloo+2:wght@500;600;700&family=Nunito:wght@400;600;700;800&display=swap"
-      rel="stylesheet"
-    />
+    <!-- 字体全部自托管（见 src/index.css 的 @font-face）+ 系统字体，不引任何第三方字体 CDN：
+         外链字体样式表是阻塞渲染的，在国内不可达时会一直等到超时，首屏直接白屏 -->
   </head>
   <body>
     <div id="root"></div>

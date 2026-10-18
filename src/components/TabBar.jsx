@@ -9,7 +9,12 @@ const TABS = [
   { key: 'period', label: '生理期', emoji: '🌸' },
 ]
 
-export default function TabBar({ active, onChange }) {
+/**
+ * @param onPrefetch 按下页签时调用（还没触发 click）：调用方据此提前拉取该页签的
+ *                   代码分包。见 views/tabPrefetch.js —— 有明确用户意图的预加载
+ *                   不受省流/弱网限制，因为这个请求点了也要发。
+ */
+export default function TabBar({ active, onChange, onPrefetch }) {
   // 未读小红点来自统一未读中心；Provider 不在时 useUnread 安全降级为全零
   const { tabDots } = useUnread()
   return (
@@ -27,6 +32,7 @@ export default function TabBar({ active, onChange }) {
               <button
                 key={t.key}
                 onClick={() => onChange(t.key)}
+                onPointerDown={() => onPrefetch?.(t.key)}
                 className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px] font-bold transition ${
                   on ? 'text-rosy' : 'text-cocoaSoft/70'
                 }`}

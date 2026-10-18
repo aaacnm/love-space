@@ -35,6 +35,15 @@ global.getComputedStyle = dom.window.getComputedStyle
 global.localStorage = dom.window.localStorage
 global.requestAnimationFrame = (cb) => setTimeout(cb, 0)
 global.cancelAnimationFrame = (id) => clearTimeout(id)
+// jsdom 没有 requestIdleCallback：补一个「下一轮宏任务」的实现，
+// 让「首屏画完再刷未读」的延迟（lib/idle.js）在测试里很快兑现，而不是干等 400ms 的降级定时器
+const idleShim = (cb) => setTimeout(() => cb({ didTimeout: false, timeRemaining: () => 50 }), 0)
+if (!dom.window.requestIdleCallback) {
+  dom.window.requestIdleCallback = idleShim
+  dom.window.cancelIdleCallback = (id) => clearTimeout(id)
+}
+global.requestIdleCallback = dom.window.requestIdleCallback
+global.cancelIdleCallback = dom.window.cancelIdleCallback
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const tick = (ms = 10) => sleep(ms)

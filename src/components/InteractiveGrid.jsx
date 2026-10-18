@@ -25,12 +25,18 @@ export default function InteractiveGrid() {
   const { coupleId, user, myMember, partner, milestones } = useStore()
   const [open, setOpen] = useState(null)
 
-  const { rows: moods } = useCollection('moods', coupleId)
-
   const today = todayStr()
+  // 只要「今天」的心情：磁贴显示的是今天，没必要把两人所有历史心情都拉下来。
+  // 缓存键带上日期 —— 隔天的旧缓存不会被当成今天的。（打开弹窗的 MoodCard 也一样，
+  // 它只显示今天，用的是同一份按天过滤的查询）
+  const moodFilters = useMemo(() => [['date', today]], [today])
+  const { rows: moods } = useCollection('moods', coupleId, {
+    filters: moodFilters,
+    cacheKey: `moods:day:${today}`,
+  })
 
-  const myMood = moods.find((r) => r.date === today && r.user_id === user?.id) || null
-  const taMood = moods.find((r) => r.date === today && r.user_id !== user?.id) || null
+  const myMood = moods.find((r) => r.user_id === user?.id) || null
+  const taMood = moods.find((r) => r.user_id !== user?.id) || null
 
   const me = useMemo(() => lookupCity(myMember?.city), [myMember?.city])
   const ta = useMemo(() => lookupCity(partner?.city), [partner?.city])

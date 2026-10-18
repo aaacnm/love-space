@@ -1,6 +1,6 @@
 /**
  * 分页（usePagedCollection）与 LoadMore 组件测试
- *   1. 首屏只拉最近 30 条（75 条数据），hasMore=true
+ *   1. 首屏只拉最近 PAGE_SIZE 条（18，75 条数据），hasMore=true
  *   2. loadMore 增量拉下一页并去重追加；最后一页不满页 → hasMore=false
  *   3. 事件 reload 保留加载深度（不退化回首屏）
  *   4. DELETE 兜底按 old.couple_id 过滤（非本空间不重拉）
@@ -73,12 +73,15 @@ const supabase = {
     }
     return q
   },
+  // 共享频道（lib/realtimeBus.js）上每条表登记两条监听，都按表记录：
+  //   main —— event:'*' 带 couple_id 过滤；del —— event:'DELETE' 不带过滤的兜底
   channel: (name) => {
     log.channels++
     const ch = {}
     const handlers = []
     ch.on = (event, cfg, cb) => {
-      if (event === 'postgres_changes' && cfg?.event === 'DELETE') handlers.push(cb)
+      if (event === 'postgres_changes' && cfg?.event === 'DELETE') handlers.push({ table: cfg.table, cb })
+      else if (event === 'postgres_changes') handlers.push({ table: cfg.table, cb, main: true })
       return ch
     }
     ch.subscribe = () => ch
@@ -134,40 +137,66 @@ const qCount = () => log.queries.length
 
 await tick() // 首屏挂载
 
-// ---------- 场景 A：首屏 30 条 ----------
-ok(probeText() === '30:true', `A1 首屏 30 条且 hasMore（实际 ${probeText()}）`)
-ok(log.queries.length === 1 && log.queries[0].from === 0 && log.queries[0].to === 29, 'A2 首屏查询窗口 [0,29]')
+// 分页大小直接读源码常量：PAGE_SIZE 调了用例不用改
+const PS = window.__pageSize
+const TOTAL = 75
+
+// ---------- 场景 A：首屏 PAGE_SIZE 条 ----------
+ok(probeText() === `${PS}:true`, `A1 首屏 ${PS} 条且 hasMore（实际 ${probeText()}）`)
+ok(
+  log.queries.length === 1 && log.queries[0].from === 0 && log.queries[0].to === PS - 1,
+  `A2 首屏查询窗口 [0,${PS - 1}]`,
+)
 ok(window.__probe.rows[0].id === 'p00', 'A3 第一行是最新数据')
 
 // ---------- 场景 B：loadMore 增量 ----------
 await window.__probe.loadMore()
 await tick()
-ok(probeText() === '60:true', `B1 加载第二页共 60 条（实际 ${probeText()}）`)
-ok(log.queries[1].from === 30 && log.queries[1].to === 59, 'B2 只拉新窗口 [30,59]（不重传已加载页）')
-ok(window.__probe.rows[59].id === 'p59', 'B3 追加顺序正确（第 60 行 = p59）')
+ok(probeText() === `${2 * PS}:true`, `B1 加载第二页共 ${2 * PS} 条（实际 ${probeText()}）`)
+ok(
+  log.queries[1].from === PS && log.queries[1].to === 2 * PS - 1,
+  `B2 只拉新窗口 [${PS},${2 * PS - 1}]（不重传已加载页）`,
+)
+ok(window.__probe.rows[2 * PS - 1].id === `p${String(2 * PS - 1).padStart(2, '0')}`, 'B3 追加顺序正确')
 
-// ---------- 场景 C：最后一页不满页 → 到底 ----------
-await window.__probe.loadMore()
-await tick()
-ok(probeText() === '75:false', `C1 全部 75 条加载完且 hasMore=false（实际 ${probeText()}）`)
-ok(log.queries[2].returned === 15, 'C2 第三页只返回剩余 15 条')
+// ---------- 场景 C：一直翻到最后一页（不满页 → 到底） ----------
+let pages = 2
+while (window.__probe.hasMore && pages < 20) {
+  await window.__probe.loadMore()
+  await tick()
+  pages++
+  const want = Math.min(pages * PS, TOTAL)
+  ok(probeText() === `${want}:${String(want < TOTAL)}`, `C1.${pages} 第 ${pages} 页后 ${want} 条（实际 ${probeText()}）`)
+}
+ok(probeText() === `${TOTAL}:false`, `C1 全部 ${TOTAL} 条加载完且 hasMore=false（实际 ${probeText()}）`)
+const lastQ = log.queries[log.queries.length - 1]
+ok(lastQ.returned === TOTAL - (pages - 1) * PS, `C2 最后一页只返回剩余 ${TOTAL - (pages - 1) * PS} 条`)
 
 // ---------- 场景 D：事件 reload 保留深度 ----------
 const n0 = qCount()
 window.__probe.reload()
 await tick()
-ok(qCount() === n0 + 1 && log.queries[n0].to === 89, 'D1 reload 按 3 页深度重拉（窗口 [0,89]，不退化回首屏）')
+ok(
+  qCount() === n0 + 1 && log.queries[n0].to === pages * PS - 1,
+  `D1 reload 按 ${pages} 页深度重拉（窗口 [0,${pages * PS - 1}]，不退化回首屏）`,
+)
 ok(probeText() === '75:false', 'D2 reload 后数据与状态不变')
 
 // ---------- 场景 E：DELETE 兜底按旧行过滤 ----------
 const handlers = deleteHandlers[deleteHandlers.length - 1]
+// 本用例订阅的是 photos：兜底监听 vs 带过滤的主监听要分开取
+const delOf = (t) => handlers.find((h) => h.table === t && !h.main)?.cb
+const mainOf = (t) => handlers.find((h) => h.table === t && h.main)?.cb
 const n1 = qCount()
-handlers[0]({ old: { id: 'p01', couple_id: 'other-space' } })
+delOf('photos')({ old: { id: 'p01', couple_id: 'other-space' } })
 await tick()
 ok(qCount() === n1, 'E1 非本空间删除不触发重拉')
-handlers[0]({ old: { id: 'p01', couple_id: 'c1' } })
+mainOf('photos')({ eventType: 'DELETE', table: 'photos', old: { id: 'p01', couple_id: 'c1' } })
 await tick()
 ok(qCount() === n1 + 1, 'E2 本空间删除触发按深度重拉')
+delOf('photos')({ old: { id: 'p01', couple_id: 'c1' } })
+await tick()
+ok(qCount() === n1 + 1, 'E2b 兜底监听不重复重拉（本空间删除主监听已刷过）')
 
 // ---------- 场景 F：隐藏 tab 暂停 ----------
 const removed0 = log.removed
@@ -181,7 +210,10 @@ await tick()
 ok(qCount() === n2, 'F2 隐藏页 reload/loadMore 均不发查询')
 window.__setActive(true)
 await tick()
-ok(qCount() === n2 + 1 && log.queries[n2].to === 89, 'F3 切回自动按 3 页深度补拉')
+ok(
+  qCount() === n2 + 1 && log.queries[n2].to === pages * PS - 1,
+  `F3 切回自动按 ${pages} 页深度补拉`,
+)
 
 // ---------- 场景 G：loadMore 防重入 ----------
 const n3 = qCount()

@@ -59,11 +59,70 @@ https://wengwenilnywpijuraqn.supabase.co/functions/v1/push-send
 
 ---
 
-## 密钥说明（自用项目，已内嵌）
+## 第 6 步：配置密钥（**必做**，不配就推不动）
 
-- VAPID 公钥：写在 `src/lib/push.js`（公开无妨）
-- VAPID 私钥 + Webhook 密钥：内嵌在 `functions/push-send/index.ts`（只有你能看到 Dashboard 里的函数代码）
-- 两者必须成对：换密钥时要同时改前端和函数
+密钥**不再写在代码里**（2026-10-17 起），两处分别配置：
+
+### 6.1 Edge Function 的 Secrets
+
+Dashboard → **Edge Functions → push-send → Secrets**（或命令行 `supabase secrets set`）：
+
+```
+PUSH_SECRET         = 共享密钥（数据库触发器调云函数时带的 x-push-secret）
+VAPID_PUBLIC_KEY    = VAPID 公钥
+VAPID_PRIVATE_KEY   = VAPID 私钥
+```
+
+配好后**重新部署**一次 push-send。缺任何一个，函数会直接返回
+
+```json
+{ "error": "Edge Function 缺少环境变量：PUSH_SECRET, ..." }
+```
+
+而不是含糊的 403 —— 这是刻意的：宁可停推，也不要用错密钥静默推送。
+
+### 6.2 数据库侧的共享密钥（Vault）
+
+SQL Editor 执行一次：
+
+```sql
+select vault.create_secret('这里填和 PUSH_SECRET 一样的值', 'push_secret');
+```
+
+之后由 `038_push_secrets.sql` 的 `public.push_secret()` 读取；触发器在密钥缺失时
+记一条 warning 并跳过推送（不会带着空值去撞鉴权）。轮换：
+
+> ⚠⚠ **这个函数不能被客户端调用** —— 它返回的就是明文共享密钥。
+> 038 结尾必须 `revoke all on function public.push_secret() from public;` +
+> `revoke all ... from anon, authenticated;`。
+> ⚠ 只 `revoke from public` **挡不住**：Supabase 在 public schema 上有
+> `alter default privileges ... grant all on functions to postgres, anon, authenticated, service_role`，
+> 函数一创建就自动被授予 anon / authenticated，这是逐角色授权，revoke PUBLIC 碰不到。
+> 已在线上实测过漏洞形态：匿名 `GET /rest/v1/rpc/push_secret` 直接 200 返回密钥。
+> 修复脚本：`supabase/diagnostics/fix-push-secret-grant.sql`（含前后对比验证）。
+> 触发器不需要这些授权：`fn_push_notify()` 是 security definer，以函数所有者身份调用。
+
+```sql
+select id, name from vault.secrets where name = 'push_secret';   -- 找到 id
+select vault.update_secret('<id>', '新值');
+```
+
+## 密钥说明
+
+- **VAPID 公钥**：写在 `src/lib/push.js`，本来就要发给浏览器，公开无妨
+- **VAPID 私钥 / 共享密钥**：只存在于 Edge Function Secrets 与数据库 Vault，**不许进仓库**
+- 两者必须成对：换 VAPID 时要同时更新前端公钥与函数私钥
+- ⚠ 换 VAPID 后旧订阅一律推不动（403）。云函数会把 403/404/410 的订阅自动清掉，
+  用户下次打开 App 点「开启提醒」就会重新登记；想立刻全量重来，可执行
+  `delete from public.push_subscriptions;`（038 迁移里也有这行，注释状态）
+
+## 轮换清单（照着做一遍即可）
+
+1. 生成新密钥对与新的共享密钥
+2. `supabase secrets set PUSH_SECRET=… VAPID_PUBLIC_KEY=… VAPID_PRIVATE_KEY=…` → 重部署 push-send
+3. SQL Editor：`select vault.update_secret('<id>', '新的共享密钥');`
+4. 改 `src/lib/push.js` 里的 `VAPID_PUBLIC_KEY` → 发布前端
+5. 让用户重新点一次「开启提醒」（旧订阅失效）
 
 ## 常见问题
 

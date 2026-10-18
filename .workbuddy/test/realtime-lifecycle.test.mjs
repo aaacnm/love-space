@@ -39,7 +39,11 @@ const tick = (ms = 30) => sleep(ms)
 
 // ---------- supabase stub：记录查询/订阅/移除，捕获 DELETE 兜底回调 ----------
 const log = { select: 0, channels: [], removed: 0 }
-const deleteHandlers = [] // 每条 channel 捕获的 DELETE 回调数组，按创建顺序
+// 每条 channel 捕获两条监听（都按表登记）：
+//   mainHandlers  —— event:'*' 带 couple_id 过滤的主监听（服务端只推本空间变更）
+//   deleteHandlers —— event:'DELETE' 不带过滤的兜底（旧行只有主键时也认得出来）
+const mainHandlers = []
+const deleteHandlers = []
 let selectSeq = 0
 
 const supabase = {
@@ -55,16 +59,22 @@ const supabase = {
     q.then = (res) => res({ data: [{ id: `row-${selectSeq}`, couple_id: 'c1' }], error: null })
     return q
   },
+  // ⚠ 现在全 App 对一个空间只建一条 channel（lib/realtimeBus.js），
+  //    一条 channel 上会为每张表各登记一条 DELETE 兜底监听，所以回调要按表取。
   channel: (name) => {
     const ch = {}
-    const handlers = []
+    const mains = []
+    const dels = []
     ch.on = (event, cfg, cb) => {
-      if (event === 'postgres_changes' && cfg?.event === 'DELETE') handlers.push(cb)
+      if (event !== 'postgres_changes') return ch
+      if (cfg?.event === 'DELETE') dels.push({ table: cfg.table, cb })
+      else mains.push({ table: cfg.table, cb })
       return ch
     }
     ch.subscribe = () => ch
     log.channels.push(name)
-    deleteHandlers.push(handlers)
+    mainHandlers.push(mains)
+    deleteHandlers.push(dels)
     return ch
   },
   removeChannel: () => {
@@ -112,6 +122,9 @@ const ok = (cond, msg) => {
   else fail.push(msg)
 }
 const latestHandlers = () => deleteHandlers[deleteHandlers.length - 1]
+// 共享频道上按表取回调（本用例订阅的是 photos）
+const deleteHandlerOf = (table) => latestHandlers()?.find((h) => h.table === table)?.cb
+const mainHandlerOf = (table) => mainHandlers[mainHandlers.length - 1]?.find((h) => h.table === table)?.cb
 const probe = () => document.getElementById('probe').textContent
 
 await tick() // 首次挂载：load + subscribe
@@ -119,18 +132,24 @@ await tick() // 首次挂载：load + subscribe
 // ---------- 场景 A：挂载即订阅 ----------
 ok(log.select === 1, `A1 挂载拉取一次数据（实际 ${log.select}）`)
 ok(log.channels.length === 1, `A2 创建一条 channel（实际 ${log.channels.length}）`)
-ok(latestHandlers().length === 1, 'A3 DELETE 兜底监听已注册')
+ok(!!deleteHandlerOf('photos'), 'A3 photos 的 DELETE 兜底监听已注册（共享频道按表登记）')
 ok(probe() === '1:false', `A4 数据与加载态就位（实际 ${probe()}）`)
 
 // ---------- 场景 E：DELETE 精准过滤 ----------
 const beforeE = log.select
-latestHandlers()[0]({ old: { id: 9, couple_id: 'other-space' } })
+deleteHandlerOf('photos')({ old: { id: 9, couple_id: 'other-space' } })
 await tick()
 ok(log.select === beforeE, 'E1 非本空间删除不触发刷新（全表无过滤刷新已修复）')
-latestHandlers()[0]({ old: { id: 8, couple_id: 'c1' } })
+// 本空间删除：由「带 couple_id 过滤的主监听」命中（表设了 REPLICA IDENTITY FULL 时走这条路）
+mainHandlerOf('photos')({ eventType: 'DELETE', table: 'photos', old: { id: 8, couple_id: 'c1' } })
 await tick()
 ok(log.select === beforeE + 1, 'E2 本空间删除触发刷新')
-latestHandlers()[0]({ old: { id: 7 } }) // DELETE 默认只带主键：无 couple_id 保守刷新
+// 同一条删除不该被兜底监听再刷一次（避免一次删除刷两遍）
+deleteHandlerOf('photos')({ old: { id: 8, couple_id: 'c1' } })
+await tick()
+ok(log.select === beforeE + 1, 'E2b 兜底监听不重复刷新（本空间的删除主监听已经刷过）')
+// DELETE 默认只带主键：旧行没有 couple_id → 兜底保守刷新
+deleteHandlerOf('photos')({ old: { id: 7 } })
 await tick()
 ok(log.select === beforeE + 2, 'E3 旧行无 couple_id 时保守刷新（不漏刷）')
 
@@ -148,7 +167,7 @@ window.__setActive(true)
 await tick()
 ok(log.channels.length === 2, `C1 切回重新订阅（实际 ${log.channels.length} 条）`)
 ok(log.select === beforeB + 1, `C2 切回自动补拉一次（实际 ${log.select}）`)
-ok(latestHandlers().length === 1, 'C3 新 channel 的 DELETE 监听重新注册')
+ok(!!deleteHandlerOf('photos'), 'C3 新 channel 的 DELETE 监听重新注册（按表登记）')
 
 // ---------- 场景 D：enabled=false 整体停用 ----------
 window.__setEnabled(false)

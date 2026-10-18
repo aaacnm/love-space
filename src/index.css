@@ -2,6 +2,26 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ---------- 装饰字体：自托管，不走任何第三方 CDN ----------
+ * 之前 index.html 直接引 fonts.googleapis.com（内含 ZCOOL KuaiLe + Baloo 2 + Nunito 共 7 个字重）：
+ * 国内 fonts.googleapis.com 不通，一个 <link rel="stylesheet"> 就能把首屏卡到 TCP 超时；
+ * 而且 ZCOOL KuaiLe 是中文装饰字体（几 MB），对「首页那几个数字」来说代价完全不划算。
+ *
+ * 现在只留一个文件：Baloo 2 的 latin 变体（33 KB，wght 400–800 一个文件覆盖全部字重）。
+ * · unicode-range 限死拉丁区：中文根本不触发下载，页面没有数字/字母时连请求都不会发
+ * · font-display: swap —— 先用系统字体立刻画出来，字体到了再换，绝不阻塞首屏
+ * · 中文标题/正文回落系统字体（PingFang / 微软雅黑），比外链中文字体又快又好看
+ */
+@font-face {
+  font-family: 'Baloo 2';
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  src: url('./assets/fonts/baloo2-latin-var.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308,
+    U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 :root {
   color-scheme: light;
   /* 主色 RGB 三元组（女生默认粉调）：blush #F6A6B4 / rosy #E97B92 */
@@ -38,7 +58,15 @@ body {
   margin: 0;
   background: #fff6f0;
   color: #5c4a45;
-  font-family: 'Nunito', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  /* 正文一律用系统字体：中文/数字都是本机字形，零网络等待，弱网与国内环境下首屏最快 */
+  font-family:
+    system-ui,
+    -apple-system,
+    'PingFang SC',
+    'Hiragino Sans GB',
+    'Microsoft YaHei',
+    'Noto Sans SC',
+    sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 

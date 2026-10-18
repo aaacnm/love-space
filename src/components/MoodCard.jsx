@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useStore } from '../lib/store.jsx'
 import { supabase } from '../lib/supabase.js'
 import { useCollection, MOODS, todayStr } from '../lib/hooks.js'
@@ -15,11 +15,16 @@ function moodEmoji(name) {
 // bare = true 时用在弹窗内部（不套外层 Card）
 export default function MoodCard({ bare = false }) {
   const { coupleId, user, myMember, partner } = useStore()
-  const { rows, reload } = useCollection('moods', coupleId)
   const today = todayStr()
-  const todayRows = rows.filter((r) => r.date === today)
-  const mine = todayRows.find((r) => r.user_id === user?.id) || null
-  const theirs = todayRows.find((r) => r.user_id !== user?.id) || null
+  // 与首页磁贴同一份「只要今天」的查询（同 cacheKey → 复用同一份缓存，
+  // 弹窗打开时通常已经是现成的，不会再发一次请求）
+  const moodFilters = useMemo(() => [['date', today]], [today])
+  const { rows, reload } = useCollection('moods', coupleId, {
+    filters: moodFilters,
+    cacheKey: `moods:day:${today}`,
+  })
+  const mine = rows.find((r) => r.user_id === user?.id) || null
+  const theirs = rows.find((r) => r.user_id !== user?.id) || null
 
   const [open, setOpen] = useState(false)
   const [mood, setMood] = useState('开心')

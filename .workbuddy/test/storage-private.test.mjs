@@ -116,7 +116,12 @@ console.log('\n源码：getPublicUrl 清退')
   const avatar = fs.readFileSync('D:/love/src/components/Avatar.jsx', 'utf8')
   ok(avatar.includes("from('avatars')"), '头像桶保持公开读（Avatar 不变）')
   const smartimg = fs.readFileSync('D:/love/src/components/SmartImg.jsx', 'utf8')
-  ok(/if \(!src\) return null/.test(smartimg), 'SmartImg 空 src 守卫（签名期间不渲染）')
+  // 守卫的位置比写法重要：必须在渲染 <img> 之前就 return（签名未返回时不许出现空 src 的 img）。
+  // 2026-10 起这里会渲染骨架占位，所以不能对着某句固定代码断言
+  const guardAt = smartimg.indexOf('if (!src)')
+  ok(guardAt > -1 && /if \(!src\) \{[\s\S]{0,80}?return null/.test(smartimg), 'SmartImg 空 src 时直接 return（不渲染 img）')
+  ok(smartimg.lastIndexOf('<img') > guardAt, '守卫写在 <img> 之前（注释里的 <img> 不算）')
+  ok(/data-skeleton/.test(smartimg), '签名期间渲染的是骨架占位，不是空 src 的 img')
 }
 
 // ---------- 3. 迁移文件 ----------

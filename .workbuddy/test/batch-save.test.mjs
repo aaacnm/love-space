@@ -45,8 +45,10 @@ const TODAY = new Date()
 const iso = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 10, 0, 0).toISOString()
 
 db.photos = [
-  { id: 'p1', couple_id: 'c1', author_user_id: 'u1', storage_path: 'photos/c1/a.jpg', original_path: 'originals/c1/a.jpg', caption: '第一张', created_at: iso(TODAY) },
-  { id: 'p2', couple_id: 'c1', author_user_id: 'u2', storage_path: 'photos/c1/b.jpg', original_path: null, caption: '第二张', created_at: iso(TODAY) },
+  // 都带 thumb_path：没有缩略图的旧照片会触发后台补齐（多 2 次 fetch 下载 blob），
+  // 本用例只统计「保存」产生的请求，所以 fixture 按「已补齐」的新常态来
+  { id: 'p1', couple_id: 'c1', author_user_id: 'u1', storage_path: 'photos/c1/a.jpg', thumb_path: 'thumbs/c1/a.jpg', original_path: 'originals/c1/a.jpg', caption: '第一张', created_at: iso(TODAY) },
+  { id: 'p2', couple_id: 'c1', author_user_id: 'u2', storage_path: 'photos/c1/b.jpg', thumb_path: 'thumbs/c1/b.jpg', original_path: null, caption: '第二张', created_at: iso(TODAY) },
 ]
 
 const match = (row, filters) => filters.every((f) => (f.op === 'eq' ? row[f.col] === f.val : Array.isArray(f.val) && f.val.includes(row[f.col])))

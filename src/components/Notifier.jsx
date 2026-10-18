@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useStore } from '../lib/store.jsx'
-import { supabase } from '../lib/supabase.js'
 import { toast } from '../lib/toast.jsx'
+import { subscribeTable } from '../lib/realtimeBus.js'
 import {
   NOTIFY_DISMISS_KEY,
   flashTitle,
@@ -48,6 +48,11 @@ const RULES = [
   { table: 'message_comments', author: 'author_user_id', tab: 'messages', icon: '💬', text: (r) => `回复了留言：${excerpt(r.content)}` },
   { table: 'delete_requests', author: 'requester_user_id', tab: 'photos', icon: '🙋', text: () => '申请删除照片，等你确认' },
   { table: 'period_daily_logs', author: 'user_id', tab: 'period', icon: '🌸', text: () => '更新了生理期打卡' },
+  // ⚠ 矛盾处理室必须挂在这里：房间列表只在「和好」页签订阅，
+  //   不进全局监听的话，对方没打开那个页签就完全看不到邀请。
+  //   文案刻意只说「有邀请 / 有新消息」，绝不把矛盾内容带进通知。
+  { table: 'conflict_rooms', author: 'created_by', tab: 'peace', icon: '🕊️', text: () => '邀请你加入矛盾处理室' },
+  { table: 'conflict_room_messages', author: 'sender_user_id', tab: 'peace', icon: '🕊️', text: () => '在矛盾处理室说了新的话' },
 ]
 
 // ---------- 全局监听：对方的新动态 → 页面横幅 + 系统通知 ----------
@@ -110,44 +115,40 @@ export function Notifier() {
     }
   }, [])
 
-  // 一个独立频道监听全部表（自己的频道名，不和 useCollection/Poke 冲突）
+  // 监听挂在 space-<coupleId> 共享频道上：全局通知不再单独建一个频道
+  // （以前是 notifier / unread / poke-listener 三个频道各握手一次）
   useEffect(() => {
     if (!coupleId || !user) return
 
-    const channel = supabase.channel(`notifier-${coupleId}`)
-    for (const rule of RULES) {
-      channel.on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: rule.table, filter: `couple_id=eq.${coupleId}` },
-        (payload) => {
-          const row = payload.new
-          if (!row || !row.id || seenRef.current.has(row.id)) return
-          if (row[rule.author] === user.id) return // 自己的操作不提醒
-          seenRef.current.add(row.id)
+    const offs = RULES.map((rule) =>
+      subscribeTable(coupleId, rule.table, (payload) => {
+        if (payload.eventType !== 'INSERT') return
+        const row = payload.new
+        if (!row || !row.id || seenRef.current.has(row.id)) return
+        if (row[rule.author] === user.id) return // 自己的操作不提醒
+        seenRef.current.add(row.id)
 
-          const name = partner?.nickname || 'TA'
-          const text = rule.text(row)
-          buzz()
-          flashTitle(true)
-          showSystemNotify({ title: `💗 ${name} ${rule.text(row).split('：')[0]}`, body: text, tab: rule.tab })
+        const name = partner?.nickname || 'TA'
+        const text = rule.text(row)
+        buzz()
+        flashTitle(true)
+        showSystemNotify({ title: `💗 ${name} ${rule.text(row).split('：')[0]}`, body: text, tab: rule.tab })
 
-          // 前台：页面内横幅 5 秒；新事件直接替换当前横幅并重新计时（最新动态优先）
-          setBanner({ key: row.id, icon: rule.icon, name, text, tab: rule.tab })
-          clearTimeout(bannerTimer.current)
-          bannerTimer.current = setTimeout(() => {
-            setBanner(null)
-            bannerTimer.current = null
-          }, 5000)
-        },
-      )
-    }
-    channel.subscribe()
+        // 前台：页面内横幅 5 秒；新事件直接替换当前横幅并重新计时（最新动态优先）
+        setBanner({ key: row.id, icon: rule.icon, name, text, tab: rule.tab })
+        clearTimeout(bannerTimer.current)
+        bannerTimer.current = setTimeout(() => {
+          setBanner(null)
+          bannerTimer.current = null
+        }, 5000)
+      }),
+    )
 
     return () => {
       clearTimeout(bannerTimer.current)
       bannerTimer.current = null
       flashTitle(false)
-      supabase.removeChannel(channel)
+      offs.forEach((off) => off())
     }
   }, [coupleId, user, partner])
 

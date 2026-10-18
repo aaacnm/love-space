@@ -8,6 +8,7 @@ import ManageMembersModal from '../components/ManageMembersModal.jsx'
 import { PokeSection } from '../components/Poke.jsx'
 import InteractiveGrid from '../components/InteractiveGrid.jsx'
 import PartnerNews from '../components/PartnerNews.jsx'
+import { Bone } from '../components/Skeleton.jsx'
 import { timeInZone } from '../lib/hooks.js'
 
 function useNow(interval = 1000) {
@@ -55,7 +56,7 @@ const cnDate = (s) => {
 }
 
 export default function Home() {
-  const { couple, members, milestones, myMember, partner, refresh } = useStore()
+  const { couple, members, milestones, myMember, partner, refresh, derived, loading } = useStore()
   const now = useNow()
   const [showMeetup, setShowMeetup] = useState(false)
   const [showProfile, setShowProfile] = useState(false)
@@ -74,11 +75,15 @@ export default function Home() {
         ? '点一下复制，发给男朋友，邀请他加入这个空间'
         : '点一下复制，发给 TA 加入这个空间'
 
-  const anniversary = milestones.find((m) => m.type === 'anniversary')
+  // 纪念日 / 下次见面：优先用服务端在 bootstrap 里算好的（省一次排序），
+  // RPC 不可用或缓存太旧时回退到本地计算；缓存里的「下次见面」可能是昨天的，要再校验一次日期
+  const serverNext =
+    derived?.nextMeetup && parseDay(derived.nextMeetup.date) >= startOfToday() ? derived.nextMeetup : null
+  const anniversary = derived?.anniversary || milestones.find((m) => m.type === 'anniversary')
   const futureMeetups = milestones
     .filter((m) => m.type === 'meetup' && parseDay(m.date) >= startOfToday())
     .sort((a, b) => parseDay(a.date) - parseDay(b.date))
-  const nextMeetup = futureMeetups[0]
+  const nextMeetup = serverNext || futureMeetups[0]
 
   const together = anniversary ? diffParts(parseDay(anniversary.date), now) : null
 
@@ -163,7 +168,7 @@ export default function Home() {
           onClick={copyCode}
           className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-blush/10 px-4 py-1.5 text-sm font-bold text-rosy"
         >
-          情侣码 <span className="font-display tracking-[0.2em]">{couple?.code}</span> 📋
+          情侣码 <span className="font-display tracking-[0.2em]">{couple?.code || '••••••'}</span> 📋
         </button>
         <p className="mt-1 text-xs text-cocoaSoft/70">{inviteHint}</p>
         <button
@@ -241,22 +246,38 @@ export default function Home() {
           </button>
         </div>
         <div className="space-y-3">
-          {members.map((m) => (
-            <div key={m.id} className="flex items-center justify-between rounded-2xl bg-cream px-4 py-3">
+          {loading && members.length === 0 ? (
+            // 首页永远先站结构：成员还没到就占一行同高度的骨架，避免空→有的位移
+            <div aria-hidden="true" data-skeleton="true" className="flex items-center justify-between rounded-2xl bg-cream px-4 py-3">
               <div className="flex items-center gap-3">
-                <Avatar member={m} size="md" />
-                <div>
-                  <div className="font-bold text-cocoa">{m.nickname}</div>
-                  <div className="text-xs text-cocoaSoft">{m.city || '未填写城市'}</div>
+                <Bone rounded="rounded-full" className="h-10 w-10" />
+                <div className="space-y-2">
+                  <Bone rounded="rounded-full" className="h-3 w-16" />
+                  <Bone rounded="rounded-full" className="h-2.5 w-24" />
                 </div>
               </div>
-              <div className="text-right">
-                <div className="font-display text-xl text-rosy">{m.timezone ? timeInZone(m.timezone) : '--:--'}</div>
-                <div className="text-xs text-cocoaSoft/70">{m.timezone ? m.timezone.split('/').pop().replace('_', ' ') : ''}</div>
-              </div>
+              <Bone className="h-6 w-12" />
             </div>
-          ))}
-          {members.length < 2 && (
+          ) : (
+            members.map((m) => (
+              <div key={m.id} className="flex items-center justify-between rounded-2xl bg-cream px-4 py-3">
+                <div className="flex items-center gap-3">
+                  <Avatar member={m} size="md" />
+                  <div>
+                    <div className="font-bold text-cocoa">{m.nickname}</div>
+                    <div className="text-xs text-cocoaSoft">{m.city || '未填写城市'}</div>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="font-display text-xl text-rosy">{m.timezone ? timeInZone(m.timezone) : '--:--'}</div>
+                  <div className="text-xs text-cocoaSoft/70">
+                    {m.timezone ? m.timezone.split('/').pop().replace('_', ' ') : ''}
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+          {!loading && members.length < 2 && (
             <p className="text-center text-sm text-cocoaSoft">把情侣码发给 TA，这里会显示 TA 的时间 💌</p>
           )}
         </div>

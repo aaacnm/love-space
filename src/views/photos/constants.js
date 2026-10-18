@@ -1,12 +1,15 @@
 // 照片墙的常量与纯展示工具：从 Photos.jsx 抽出来，供页面与子组件共用。
 
 // photos 已转私有桶：展示一律走签名 URL（lib/storage.js，带内存缓存）
-// 网格/封面直接签真实文件（缩略图文件本身就是 480px 小图；没有缩略图的旧照片签原图），
-// 方形裁切交给 CSS object-cover —— 等比裁剪不会拉伸变形
-export const thumbPathOf = (p) => p.thumb_path || p.storage_path
+//
+// ⚠️ 网格/封面/回收站**只允许加载缩略图**，绝不回退 storage_path 原图：
+// 一张老照片的原图动辄几 MB，列表一屏十几张就能吃掉几十 MB 流量。
+// 缺 thumb_path 的旧照片由 useThumbSrcs 走「服务端 480 变换」兜底（同样是几十 KB）。
+export const thumbPathOf = (p) => p.thumb_path || null
 
-// 灯箱/大图按需单签 + 图片变换（contain 等比适配，不放大不加边），避免把几 MB 原图怼进手机流量
-export const PREVIEW_TF = { height: 1280, resize: 'contain' }
+// 480 / 1280 两档图片变换的**唯一定义**在 lib/mediaUrls.js（留言、日记也用它）；
+// 这里转出是为了不让既有 import 到处改。改尺寸请改那边。
+export { THUMB_TF, PREVIEW_TF } from '../../lib/mediaUrls.js'
 
 export const MAX_PICK = 9
 export const UPLOAD_CONCURRENCY = 3

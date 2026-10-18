@@ -58,6 +58,10 @@ create policy "push_subscriptions_delete" on public.push_subscriptions
 
 -- ---------- 2. 通用触发函数：新动态 → 调 push-send ----------
 -- 函数侧会校验 x-push-secret，并只提醒同一 couple 的另一位（自己动的不推）
+-- ⚠ 2026-10-17：这里的 x-push-secret 曾经是明文密钥（已轮换、视为已泄露）。
+--   密钥不再进代码 —— 038_push_secrets.sql 会用同一个函数名覆盖它，
+--   改成从 Vault 读 `push_secret`。本文件保留原来的骨架（迁移是有序历史），
+--   但**不要再往这里填真实密钥**。
 create or replace function public.fn_push_notify()
 returns trigger
 language plpgsql
@@ -69,7 +73,10 @@ begin
     url := 'https://wengwenilnywpijuraqn.supabase.co/functions/v1/push-send',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
-      'x-push-secret', 'a8682cff87a9a282684fe7f294646de075d03730814965ee'
+      -- 真实密钥见 038_push_secrets.sql（Vault: push_secret）；这里刻意留空。
+      -- 留空而不是直接调 push_secret()：026 跑在 038 之前，那时函数还不存在，
+      -- 会让所有 INSERT 因为「函数不存在」整个失败（宁可推送失败，也不能写不进数据）。
+      'x-push-secret', ''
     ),
     body := jsonb_build_object(
       'type', TG_OP,

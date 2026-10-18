@@ -285,9 +285,17 @@ await mount()
 
   const imgs = [...document.querySelectorAll('img[alt="图片留言"]')]
   ok(imgs.length >= 1 && imgs[0].src.includes('/sign/'), '图片留言走私有桶签名 URL')
+  // 卡片上的图走 480 cover 变换（不再直接签 1280 的原文件），卡片小、图也必须小
   ok(
-    signLog.some((r) => (r.path || '').includes('messages/c1/img1') && r.transform === null),
-    '流内缩略图批量签真实文件（无 transform，裁切交给 CSS object-cover）',
+    signLog.some(
+      (r) =>
+        (r.path || '').includes('messages/c1/img1') &&
+        r.transform &&
+        r.transform.width === 480 &&
+        r.transform.height === 480 &&
+        r.transform.resize === 'cover',
+    ),
+    '流内卡片只签 480 缩略图（带 height+resize，不变形）',
   )
 
   // 语音消息有 VoiceNote 按钮（播放键）
